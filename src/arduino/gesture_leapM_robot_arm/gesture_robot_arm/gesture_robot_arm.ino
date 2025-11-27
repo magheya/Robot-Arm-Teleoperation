@@ -65,7 +65,7 @@ void setup() {
     delay(200);
   }
   
-  Serial.println("✅ Robot arm system initialized and ready!");
+  Serial.println(" Robot arm system initialized and ready!");
   printStatus();
 }
 
@@ -78,7 +78,7 @@ void loop() {
       Serial.read();
     }
     
-    Serial.print("📥 Received command: '");
+    Serial.print("Received command: '");
     Serial.print(command);
     Serial.println("'");
     
@@ -114,7 +114,7 @@ void loop() {
         break;
         
       default:
-        Serial.print("❌ Unknown command: '");
+        Serial.print("Unknown command: '");
         Serial.print(command);
         Serial.println("' (Use O, C, L, R, S, or H)");
         break;
@@ -125,7 +125,7 @@ void loop() {
 }
 
 void openBothGrippers() {
-  Serial.println("🔓 Opening both grippers...");
+  Serial.println(" Opening both grippers...");
   
   // Flash LED once for open command
   digitalWrite(LED_BUILTIN, HIGH);
@@ -138,12 +138,12 @@ void openBothGrippers() {
   currentLeftPos = LEFT_GRIPPER_OPEN;
   currentRightPos = RIGHT_GRIPPER_OPEN;
   
-  Serial.println("✅ Both grippers opened!");
+  Serial.println(" Both grippers opened!");
   printGripperStatus();
 }
 
 void closeBothGrippers() {
-  Serial.println("🔒 Closing both grippers...");
+  Serial.println(" Closing both grippers...");
   
   // Flash LED twice for close command
   for(int i = 0; i < 2; i++) {
@@ -159,12 +159,12 @@ void closeBothGrippers() {
   currentLeftPos = LEFT_GRIPPER_CLOSED;
   currentRightPos = RIGHT_GRIPPER_CLOSED;
   
-  Serial.println("✅ Both grippers closed!");
+  Serial.println(" Both grippers closed!");
   printGripperStatus();
 }
 
 void rotateLeft() {
-  Serial.println("🔄 Rotating left...");
+  Serial.println(" Rotating left...");
   
   // Flash LED pattern for left rotation
   for(int i = 0; i < 2; i++) {
@@ -181,11 +181,11 @@ void rotateLeft() {
   // Stop rotation
   rotationServo.write(ROTATION_STOP);
   
-  Serial.println("✅ Left rotation complete!");
+  Serial.println(" Left rotation complete!");
 }
 
 void rotateRight() {
-  Serial.println("🔄 Rotating right...");
+  Serial.println(" Rotating right...");
   
   // Flash LED pattern for right rotation  
   for(int i = 0; i < 3; i++) {
@@ -202,11 +202,11 @@ void rotateRight() {
   // Stop rotation
   rotationServo.write(ROTATION_STOP);
   
-  Serial.println("✅ Right rotation complete!");
+  Serial.println(" Right rotation complete!");
 }
 
 void goHome() {
-  Serial.println("🏠 Moving to home position...");
+  Serial.println(" Moving to home position...");
   
   // Flash LED multiple times
   for(int i = 0; i < 4; i++) {
@@ -225,7 +225,7 @@ void goHome() {
   currentLeftPos = 90;
   currentRightPos = 90;
   
-  Serial.println("✅ Home position reached!");
+  Serial.println(" Home position reached!");
   printStatus();
 }
 
@@ -292,7 +292,7 @@ void printPositionStatus(int currentPos, int openPos, int closedPos) {
 }
 
 void printStatus() {
-  Serial.println("📊 Robot Arm Status:");
+  Serial.println(" Robot Arm Status:");
   Serial.print("   Left Gripper:  ");
   Serial.print(currentLeftPos);
   Serial.println("°");

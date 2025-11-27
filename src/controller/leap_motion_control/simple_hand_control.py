@@ -111,22 +111,22 @@ class RobotArmController:
                 pass
         
         if available_ports:
-            print(f"📋 Available Arduino ports: {available_ports}")
+            print(f" Available Arduino ports: {available_ports}")
             return available_ports[0]  # Use first available port
         else:
-            print("❌ No Arduino ports found")
+            print(" No Arduino ports found")
             return None
     
     def _connect_to_arduino(self):
         """Connect to Arduino with retry logic"""
         if not self.port:
-            print("❌ No Arduino port specified")
+            print(" No Arduino port specified")
             return
         
         max_retries = 3
         for attempt in range(max_retries):
             try:
-                print(f"🔌 Connecting to Arduino on {self.port} (attempt {attempt + 1}/{max_retries})...")
+                print(f" Connecting to Arduino on {self.port} (attempt {attempt + 1}/{max_retries})...")
                 self.arduino = serial.Serial(self.port, self.baud_rate, timeout=2)
                 time.sleep(3)  # Give Arduino more time to initialize
                 
@@ -137,29 +137,29 @@ class RobotArmController:
                 # Try to read response
                 if self.arduino.in_waiting > 0:
                     response = self.arduino.read(self.arduino.in_waiting)
-                    print(f"✅ Arduino connected! Response: {len(response)} bytes")
+                    print(f"Arduino connected! Response: {len(response)} bytes")
                 else:
-                    print(f"✅ Arduino connected on {self.port} at {self.baud_rate} baud")
+                    print(f" Arduino connected on {self.port} at {self.baud_rate} baud")
                 
                 return
                 
             except serial.SerialException as e:
-                print(f"❌ Connection attempt {attempt + 1} failed: {e}")
+                print(f" Connection attempt {attempt + 1} failed: {e}")
                 if attempt < max_retries - 1:
                     print("   Retrying in 2 seconds...")
                     time.sleep(2)
                 else:
-                    print("❌ Failed to connect after all attempts")
+                    print(" Failed to connect after all attempts")
                     self.arduino = None
             except Exception as e:
-                print(f"❌ Unexpected error: {e}")
+                print(f" Unexpected error: {e}")
                 self.arduino = None
                 break
     
     def send_command(self, gesture):
         """Send gesture command to Arduino"""
         if not self.arduino:
-            print("❌ No Arduino connection")
+            print(" No Arduino connection")
             return
         
         try:
@@ -172,7 +172,7 @@ class RobotArmController:
                 print("📤 Sent: 'C' (Closed hand)")
                 
         except Exception as e:
-            print(f"❌ Error sending command: {e}")
+            print(f" Error sending command: {e}")
     
     def close(self):
         """Close Arduino connection"""
@@ -241,14 +241,14 @@ class HandGestureListener(leap.Listener):
 
 
 def main():
-    print("🤖 Simple Robot Arm Gesture Control")
+    print(" Simple Robot Arm Gesture Control")
     print("=" * 50)
     
     # Specify Arduino connection explicitly
     arduino_port = '/dev/cu.usbmodem2101'  # Your specific Arduino port
     arduino_baud = 9600  # Match your Arduino code baud rate
     
-    print(f"🔌 Attempting to connect to Arduino on {arduino_port}...")
+    print(f" Attempting to connect to Arduino on {arduino_port}...")
     
     print("Supported gestures:")
     print("  ✋ OPEN HAND   → Open gripper / Release")
@@ -274,7 +274,7 @@ def main():
             while True:
                 time.sleep(0.1)
         except KeyboardInterrupt:
-            print("\n👋 Stopping gesture control...")
+            print("\n Stopping gesture control...")
             gesture_listener.cleanup()
             print("✓ Disconnected from devices")
 
