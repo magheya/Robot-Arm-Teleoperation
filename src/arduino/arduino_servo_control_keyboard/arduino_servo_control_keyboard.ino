@@ -1,9 +1,26 @@
 #include <Servo.h>
+#include <Stepper.h>
 
-const int NUM_SERVOS = 6;
-const int servoPins[NUM_SERVOS] = {3, 5, 6, 9, 10, 11}; 
+// ---- Servo setup ----
+const int NUM_SERVOS = 4;
+const int servoPins[NUM_SERVOS] = {5, 6, 9, 10};
 Servo servos[NUM_SERVOS];
-int positions[NUM_SERVOS];  
+int positions[NUM_SERVOS];
+
+// ---- Stepper setup ----
+const int stepsPerRevolution = 200;
+
+// Give the motor control pins names:
+#define pwmA 3
+#define pwmB 11
+#define brakeA 9
+#define brakeB 8
+#define dirA 12
+#define dirB 13
+#define stepperSpeed 60
+
+// Initialize the stepper library on the motor shield:
+Stepper myStepper = Stepper(stepsPerRevolution, dirA, dirB);
 
 void setup() {
   Serial.begin(115200);
@@ -15,7 +32,20 @@ void setup() {
     servos[i].write(positions[i]);
   }
 
-  Serial.println("Arduino ready - expecting packets: <id angle> (id 0-5)");
+  // Initialize stepper 
+  pinMode(pwmA, OUTPUT);
+  pinMode(pwmB, OUTPUT);
+  pinMode(brakeA, OUTPUT);
+  pinMode(brakeB, OUTPUT);
+
+  digitalWrite(pwmA, HIGH);
+  digitalWrite(pwmB, HIGH);
+  digitalWrite(brakeA, LOW);
+  digitalWrite(brakeB, LOW);
+
+  myStepper.setSpeed(stepperSpeed);
+
+  Serial.println("Arduino ready - expecting packets: <id angle> (id 0-5) or STEP <steps>");
 }
 
 void loop() {
@@ -26,7 +56,7 @@ void loop() {
 
     if (c == '\n') {
       processPacket(input);
-      input = ""; // clear buffer
+      input = "";
     } else {
       input += c;
     }
@@ -40,6 +70,22 @@ void processPacket(String packet) {
   Serial.print("Received packet: ");
   Serial.println(packet);
 
+  // Stepper command
+  if (packet.startsWith("STEP")) {
+    int steps;
+    int count = sscanf(packet.c_str(), "STEP %d", &steps);
+    if (count != 1) {
+      Serial.println("Error: STEP command must be 'STEP <steps>'");
+      return;
+    }
+
+    myStepper.step(steps);
+    Serial.print("Stepper moved by steps: ");
+    Serial.println(steps);
+    return;
+  }
+
+  // Servo command
   int id, angle;
   int count = sscanf(packet.c_str(), "%d %d", &id, &angle);
 
@@ -53,8 +99,7 @@ void processPacket(String packet) {
     return;
   }
 
-  angle = constrain(angle, 0, 180);
-
+  angle = constrain(angle, 0, 360);
   servos[id].write(angle);
   positions[id] = angle;
 
