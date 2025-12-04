@@ -206,7 +206,7 @@ class HandGestureListener(leap.Listener):
             
         if not event.hands:
             if self.frame_count % 50 == 0:
-                print("👋 Place hand above Leap Motion sensor...")
+                print(" Place hand above Leap Motion sensor...")
             return
             
         # Process only the first hand detected
@@ -230,10 +230,10 @@ class HandGestureListener(leap.Listener):
     def handle_gesture(self, gesture):
         """Handle detected gestures"""
         if gesture == GestureType.OPEN_HAND:
-            print("   🤖 Robot Action: OPEN GRIPPER / RELEASE")
+            print("    Robot Action: OPEN GRIPPER / RELEASE")
             
         elif gesture == GestureType.CLOSED_HAND:
-            print("   🤖 Robot Action: CLOSE GRIPPER / GRAB")
+            print("    Robot Action: CLOSE GRIPPER / GRAB")
     
     def cleanup(self):
         """Clean up connections"""
