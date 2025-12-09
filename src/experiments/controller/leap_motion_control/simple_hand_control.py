@@ -9,6 +9,19 @@ import serial
 from enum import Enum
 
 
+def send_servo_command(ser, servo_id, angle):
+    """Send a single servo command as '<id> <angle>\\n'"""
+    packet = f"{servo_id} {angle}\n"
+    print("packet: ", packet.encode('utf-8'))
+    ser.write(packet.encode('utf-8'))
+    print(f"Sent: {packet.strip()}")
+
+def send_stepper_command(ser, steps):
+    """Send a single stepper command as 'STEP <steps>\\n'"""
+    packet = f"STEP {steps}\n"
+    ser.write(packet.encode('utf-8'))
+    print(f"Sent: {packet.strip()}")    
+
 class GestureType(Enum):
     UNKNOWN = "unknown"
     OPEN_HAND = "open_hand"
@@ -75,7 +88,7 @@ class SimpleHandRecognizer:
 
 
 class RobotArmController:
-    def __init__(self, port=None, baud_rate=9600):
+    def __init__(self, port=None, baud_rate=115200):
         """Initialize Arduino connection with automatic port detection"""
         self.arduino = None
         self.port = port
@@ -131,13 +144,14 @@ class RobotArmController:
                 time.sleep(3)  # Give Arduino more time to initialize
                 
                 # Test connection by sending a status command
-                self.arduino.write(b'S')
+                self.arduino.write(b'0 0')
                 time.sleep(0.5)
                 
                 # Try to read response
                 if self.arduino.in_waiting > 0:
                     response = self.arduino.read(self.arduino.in_waiting)
                     print(f"Arduino connected! Response: {len(response)} bytes")
+                    print(f" Arduino connected on {self.port} at {self.baud_rate} baud")
                 else:
                     print(f" Arduino connected on {self.port} at {self.baud_rate} baud")
                 
@@ -164,12 +178,16 @@ class RobotArmController:
         
         try:
             if gesture == GestureType.OPEN_HAND:
-                self.arduino.write(b'O')  # Send 'O' for open
                 print("📤 Sent: 'O' (Open hand)")
+                send_servo_command(self.arduino, 1, 180)
+                send_servo_command(self.arduino, 0, 0)
+
+                
                 
             elif gesture == GestureType.CLOSED_HAND:
-                self.arduino.write(b'C')  # Send 'C' for closed
                 print("📤 Sent: 'C' (Closed hand)")
+                send_servo_command(self.arduino, 1, 0)          
+                send_servo_command(self.arduino, 0, 180)         
                 
         except Exception as e:
             print(f" Error sending command: {e}")
@@ -245,8 +263,8 @@ def main():
     print("=" * 50)
     
     # Specify Arduino connection explicitly
-    arduino_port = '/dev/cu.usbmodem2101'  # Your specific Arduino port
-    arduino_baud = 9600  # Match your Arduino code baud rate
+    arduino_port = '/dev/cu.usbmodem21301'  # Your specific Arduino port
+    arduino_baud = 115200  # Match your Arduino code baud rate
     
     print(f" Attempting to connect to Arduino on {arduino_port}...")
     

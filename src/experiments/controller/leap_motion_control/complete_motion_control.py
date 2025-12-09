@@ -17,7 +17,7 @@ class SimpleHandRecognizer:
         self.last_grip_gesture = None
         self.last_move_gesture = None
         
-        self.GRAB_THRESHOLD = 0.6
+        self.GRAB_THRESHOLD = 0.3
         
         # Movement settings (measured in millimeters from center)
         self.CENTER_DEADZONE = 60.0  # Hand must move 60mm away from center to trigger
@@ -31,6 +31,8 @@ class SimpleHandRecognizer:
         # --- 1. Analyze Gripper (Open/Close) ---
         current_grip = self._detect_grip(hand)
         grip_command = None
+
+        print('current grip??? ', current_grip)
         
         # Only report if grip state changes
         if current_grip != self.last_grip_gesture:
@@ -166,6 +168,7 @@ class HandGestureListener(leap.Listener):
         
         # If there is a change in grip, send it
         if grip_cmd:
+            print("GIT GRIP COMMAND...")
             self.controller.send_command(grip_cmd)
             
         # If there is a change in movement direction, send it
