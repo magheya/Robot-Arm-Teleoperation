@@ -1,92 +1,65 @@
-# Keyboard Control System Setup & Testing Guide
+# Leap Motion Robot Arm Teleoperation
 
-## Overview
-This project creates a keyboard-to-Arduino communication system where arrow key presses are sent to an Arduino via serial communication.
+This project enables real-time control of a robotic arm using hand gestures via a Leap Motion controller. It uses a hybrid software stack with Python for gesture recognition and Arduino for low-level motor control.
 
-## Hardware Requirements
-- Arduino (Uno, Nano, ESP32, etc.)
-- USB cable to connect Arduino to computer
-- Built-in LED (or external LED on pin 13)
+## 🛠 Hardware Requirements
 
-## Software Setup
+*   **Arduino Uno**
+*   **Arduino Motor Shield R3** (Critical: The firmware is specifically designed for this shield)
+*   **Leap Motion Controller** (V2)
+*   **Robot Arm Components:**
+    *   1x Bipolar Stepper Motor (Base Rotation)
+    *   1x Servo Motor (Gripper)
+    *   1x Servo Motor (Forearm Extension)
+*   **External Power Supply** (9V - 12V DC) - *Required to drive the motors*
 
-### 1. Arduino Setup
-1. Open Arduino IDE
-2. Connect your Arduino via USB
-3. Open `src/hw/keyboard_receiver.ino`
-4. Select your board and port in Arduino IDE
-5. Upload the sketch to your Arduino
+## 🔌 Wiring Guide
 
-### 2. Python Environment
-The Python environment and packages are already configured. You have:
-- Virtual environment at `.venv/`
-- Required packages: `pynput`, `pyserial`
+**⚠️ Important:** The firmware (`robot_arm_control.ino`) uses hardcoded pins specific to the Motor Shield R3. Connect your motors exactly as shown below:
 
-## Testing Steps
+| Robot Part | Motor Type | Connection on Motor Shield | Arduino Pin (Internal) |
+| :--- | :--- | :--- | :--- |
+| **Base Rotation** | Stepper Motor | **Channel A & B** Screw Terminals | 12, 13 (Dir) & 3, 11 (PWM) |
+| **Gripper** | Servo | **Pin 5** (Orange/White pin) | Pin 5 |
+| **Forearm** | Servo | **Pin 6** (Orange/White pin) | Pin 6 |
+| **Power** | DC Input | **Vin / GND** Screw Terminals | - |
 
-### Step 1: Test Arduino Connection
-Run the test script to verify everything is connected:
+*Note: Do not power the motors solely from USB. Connect an external battery or power adapter to the Arduino's barrel jack or the shield's Vin terminals.*
 
-```bash
-python test_system.py
-```
+## 💻 Software Setup
 
-This will:
-- List available serial ports
-- Test communication with Arduino
-- Send test commands and verify responses
+### 1. Arduino Firmware
+1.  Open `src/robot_arm_control.ino` in the Arduino IDE.
+2.  Ensure the standard `Servo` and `Stepper` libraries are installed.
+3.  Upload the sketch to your Arduino.
 
-### Step 2: Run the Keyboard Control
-If the test passes, run the main application:
+### 2. Python Controller
+1.  Ensure the Leap Motion V2 Desktop SDK is installed and the service is running.
+2.  Install Python dependencies:
+    ```bash
+    pip install pyserial
+    ```
+3.  Run the main controller:
+    ```bash
+    python src/main.py
+    ```
 
-```bash
-python src/controller/keyboard_control.py
-```
+## ✋ Controls (One-Handed Mode)
 
-### Step 3: Test Functionality
-1. Make sure the terminal running the Python script is active
-2. Press the **Left Arrow** key → Arduino LED should flash 2 times
-3. Press the **Right Arrow** key → Arduino LED should flash 3 times
-4. Check the Arduino Serial Monitor for command confirmations
+The system currently uses a single hand to control all 3 axes of movement:
 
-## Troubleshooting
+| Hand Gesture | Robot Action |
+| :--- | :--- |
+| **Move Hand Left / Right** | Rotates Base Left / Right |
+| **Move Hand Forward / Backward** | Extends / Retracts Forearm |
+| **Make a Fist (Grab)** | Closes Gripper |
+| **Open Hand (Release)** | Opens Gripper |
+| **Hold Hand in Center** | Stops all movement (Deadzone) |
 
-### Port Issues
-If you get "Permission denied" or port not found:
-1. Check available ports: `ls /dev/cu.*`
-2. Update the port in both files:
-   - `src/controller/keyboard_control.py` (line 6)
-   - `test_system.py` (line 15)
+## 📂 Project Structure
 
-### Permission Issues on macOS
-If you get permission errors, you may need to:
-1. Grant accessibility permissions to Terminal/VS Code
-2. Go to System Preferences → Security & Privacy → Accessibility
-3. Add your terminal application
-
-### Arduino Not Responding
-1. Check if Arduino IDE can connect to the board
-2. Try pressing the reset button on Arduino
-3. Verify the baud rate is 9600 in both Python and Arduino code
-4. Check the Serial Monitor in Arduino IDE for debug messages
-
-## How It Works
-
-1. **Python Script** (`keyboard_control.py`):
-   - Listens for keyboard events using `pynput`
-   - Detects left/right arrow key presses
-   - Sends 'L' or 'R' characters to Arduino via serial
-
-2. **Arduino Code** (`keyboard_receiver.ino`):
-   - Listens for serial data at 9600 baud
-   - Processes 'L' and 'R' commands
-   - Flashes LED and prints confirmation messages
-
-## Stopping the Program
-Press `Ctrl+C` in the terminal to stop the keyboard listener.
-
-## Next Steps
-- Add more key bindings (WASD, spacebar, etc.)
-- Control servos, motors, or other actuators
-- Add feedback from Arduino to Python (sensors, status)
-- Create a GUI interface
+*   **`src/main.py`**: The main application. Connects to Leap Motion and Arduino, and orchestrates the control loop.
+*   **`src/robot_arm_control.ino`**: Advanced Arduino firmware. Supports non-blocking stepper movement and servo control via text protocol.
+*   **`src/simple_recognizer.py`**: Logic engine. Converts raw hand coordinates (X, Z, Grip Strength) into abstract robot commands.
+*   **`src/commands.py`**: Protocol helper. Formats commands into the text packets expected by the Arduino (e.g., `"STARTSTEP 10"`).
+*   **`src/utils.py`**: Shared definitions and Enums.
