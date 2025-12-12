@@ -9,7 +9,6 @@
 const int STEPS_PER_REV = 200; // Standard NEMA 17 is 200 steps/rev
 
 // Motor Shield Pins for Stepper (Uses Channel A + Channel B)
-// Do NOT connect servos to the blue screw terminals!
 #define DIR_A   12
 #define PWM_A   3
 #define BRAKE_A 9
@@ -35,7 +34,7 @@ int servoPositions[NUM_SERVOS];
 
 // ---- Auto-Run Variables (for Stepper) ----
 bool stepperMoving = false;
-int stepperSpeed = 0; // Steps per loop cycle
+int stepperSpeed = 0;
 unsigned long lastStepperTime = 0;
 
 void setup() {
@@ -46,19 +45,16 @@ void setup() {
   pinMode(PWM_B, OUTPUT);
   pinMode(BRAKE_A, OUTPUT);
   pinMode(BRAKE_B, OUTPUT);
-
-  // Turn PWM ON and Brakes OFF (Critical for Stepper to work)
   digitalWrite(PWM_A, HIGH);
   digitalWrite(PWM_B, HIGH);
   digitalWrite(BRAKE_A, LOW);
   digitalWrite(BRAKE_B, LOW);
-
-  baseStepper.setSpeed(60); // Set default RPM
+  baseStepper.setSpeed(60);
 
   // --- Initialize Servos ---
   for (int i = 0; i < NUM_SERVOS; i++) {
     servos[i].attach(servoPins[i]);
-    servoPositions[i] = 90; // Default to center
+    servoPositions[i] = 90;
     servos[i].write(90);
   }
 
@@ -78,8 +74,6 @@ void setup() {
 
 void loop() {
   static String input = "";
-
-  // Read Serial
   while (Serial.available() > 0) {
     char c = Serial.read();
     if (c == '\n') {
@@ -93,8 +87,7 @@ void loop() {
   // Handle Continuous Stepper Rotation
   if (stepperMoving) {
     unsigned long now = millis();
-    // Adjust the delay (10ms) to change max speed smoothness
-    if (now - lastStepperTime >= 10) {
+    if (now - lastStepperTime >= 10) { 
       lastStepperTime = now;
       baseStepper.step(stepperSpeed);
     }
@@ -106,42 +99,32 @@ void processPacket(String packet) {
   if (packet.length() == 0) return;
 
   // ---- STEPPER COMMANDS ----
- 
-  // Manual Step: STEP <steps> (e.g. STEP 100)
   if (packet.startsWith("STEP")) {
     int steps;
-    int count = sscanf(packet.c_str(), "STEP %d", &steps);
-    if (count == 1) {
+    if (sscanf(packet.c_str(), "STEP %d", &steps) == 1) {
       baseStepper.step(steps);
       Serial.println("Stepped.");
     }
     return;
   }
-
-  // Continuous Spin: STARTSTEP <step_size> (e.g. STARTSTEP 1)
   if (packet.startsWith("STARTSTEP")) {
     int speed;
-    int count = sscanf(packet.c_str(), "STARTSTEP %d", &speed);
-    if (count == 1) {
+    if (sscanf(packet.c_str(), "STARTSTEP %d", &speed) == 1) {
       stepperMoving = true;
-      stepperSpeed = speed;
+      stepperSpeed = speed; 
       Serial.println("Stepper Auto-Run ON");
     }
     return;
   }
-
-  // Stop Spin: STOPSTEP
   if (packet.startsWith("STOPSTEP")) {
     stepperMoving = false;
     Serial.println("Stepper Auto-Run OFF");
     return;
   }
 
-  // ---- SERVO COMMANDS (<id> <angle>) ----
+  // ---- SERVO DIRECT ANGLE COMMANDS ----
   int id, angle;
-  int count = sscanf(packet.c_str(), "%d %d", &id, &angle);
- 
-  if (count == 2) {
+  if (sscanf(packet.c_str(), "%d %d", &id, &angle) == 2) {
     if (id >= 0 && id < NUM_SERVOS) {
       angle = constrain(angle, 0, 180);
       servos[id].write(angle);
