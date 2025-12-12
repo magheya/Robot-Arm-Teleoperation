@@ -32,15 +32,10 @@ const int servoPins[NUM_SERVOS] = {5, 10, 6, A4, A5};
 Servo servos[NUM_SERVOS];
 int servoPositions[NUM_SERVOS];
 
-// ---- Auto-Run Variables ----
+// ---- Auto-Run Variables (for Stepper) ----
 bool stepperMoving = false;
 int stepperSpeed = 0;
 unsigned long lastStepperTime = 0;
-
-bool autoIncrementing = false;
-int autoIncrementServoId = 0;
-int autoIncrementAmount = 0;
-unsigned long lastAutoIncrementTime = 0;
 
 void setup() {
   Serial.begin(115200);
@@ -74,8 +69,6 @@ void setup() {
   Serial.println("  STEP <steps>       -> Move Base manually");
   Serial.println("  STARTSTEP <speed>  -> Spin Base continuously");
   Serial.println("  STOPSTEP           -> Stop Base");
-  Serial.println("  STARTINC <id> <val>-> Increment Servo continuously");
-  Serial.println("  STOPINC            -> Stop Incrementing");
   Serial.println("  <id> <angle>       -> Move Servo (e.g., '0 45')");
 }
 
@@ -97,20 +90,6 @@ void loop() {
     if (now - lastStepperTime >= 10) { 
       lastStepperTime = now;
       baseStepper.step(stepperSpeed);
-    }
-  }
-
-  // Handle Continuous Servo Increment
-  if (autoIncrementing) {
-    unsigned long now = millis();
-    if (now - lastAutoIncrementTime >= 50) { // Adjust delay for speed
-      lastAutoIncrementTime = now;
-      int currentPos = servoPositions[autoIncrementServoId];
-      int newPos = constrain(currentPos + autoIncrementAmount, 0, 180);
-      if (newPos != currentPos) {
-        servos[autoIncrementServoId].write(newPos);
-        servoPositions[autoIncrementServoId] = newPos;
-      }
     }
   }
 }
@@ -140,25 +119,6 @@ void processPacket(String packet) {
   if (packet.startsWith("STOPSTEP")) {
     stepperMoving = false;
     Serial.println("Stepper Auto-Run OFF");
-    return;
-  }
-
-  // ---- SERVO INCREMENT COMMANDS ----
-  if (packet.startsWith("STARTINC")) {
-    int id, val;
-    if (sscanf(packet.c_str(), "STARTINC %d %d", &id, &val) == 2) {
-      if (id >= 0 && id < NUM_SERVOS) {
-        autoIncrementing = true;
-        autoIncrementServoId = id;
-        autoIncrementAmount = val;
-        Serial.println("Servo Auto-Increment ON");
-      }
-    }
-    return;
-  }
-  if (packet.startsWith("STOPINC")) {
-    autoIncrementing = false;
-    Serial.println("Servo Auto-Increment OFF");
     return;
   }
 

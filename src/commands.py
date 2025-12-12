@@ -1,70 +1,41 @@
-# Servo IDs
-SHOULDER_ID = 0
-ELBOW_ID = 1
-WRIST_ID = 2
-GRIPPER_LEFT_ID = 3
-GRIPPER_RIGHT_ID = 4
+import time
 
-# --- Helper Functions ---
+# --- SERVO ID MAPPING (Matches robot_arm_control.ino) ---
+SHOULDER_ID = 0  # Pin 5
+ELBOW_ID    = 1  # Pin 10
+WRIST_ID    = 2  # Pin 6
+GRIP_L_ID   = 3  # Pin A4
+GRIP_R_ID   = 4  # Pin A5
 
-def _send_servo_command(ser, servo_id, angle):
-    """Helper to format and send a direct servo angle command."""
-    packet = f"{servo_id} {angle}\n"
-    ser.write(packet.encode('utf-8'))
-    print(f"Sent: {packet.strip()}")
+def _send_packet(ser, packet):
+    msg = f"{packet}\n"
+    ser.write(msg.encode('utf-8'))
 
-def _send_stepper_startstep(ser, speed):
-    """Helper to format and send a continuous stepper command."""
-    packet = f"STARTSTEP {speed}\n"
-    ser.write(packet.encode('utf-8'))
-    print(f"Sent: {packet.strip()}")
-
-def _send_stepper_stopstep(ser):
-    """Helper to format and send a stepper stop command."""
-    packet = "STOPSTEP\n"
-    ser.write(packet.encode('utf-8'))
-    print(f"Sent: {packet.strip()}")
-
-def _send_servo_increment_start(ser, servo_id, amount):
-    """Helper to start continuous servo incrementing."""
-    packet = f"STARTINC {servo_id} {amount}\n"
-    ser.write(packet.encode('utf-8'))
-    print(f"Sent: {packet.strip()}")
-
-def _send_servo_increment_stop(ser):
-    """Helper to stop continuous servo incrementing."""
-    packet = "STOPINC\n"
-    ser.write(packet.encode('utf-8'))
-    print(f"Sent: {packet.strip()}")
-
-# --- Public Command Functions ---
-
-def send_close_grip(ser):
-    # Assumes closing is one servo to 180 and the other to 0
-    _send_servo_command(ser, GRIPPER_LEFT_ID, 180)
-    _send_servo_command(ser, GRIPPER_RIGHT_ID, 0)
-
-def send_open_grip(ser):
-    # Assumes opening is one servo to 0 and the other to 180
-    _send_servo_command(ser, GRIPPER_LEFT_ID, 0)
-    _send_servo_command(ser, GRIPPER_RIGHT_ID, 180)
-
+# --- 1. BASE (Stepper) ---
 def send_rotate_left(ser):
-    _send_stepper_startstep(ser, 1)
+    _send_packet(ser, "STARTSTEP -1")
 
 def send_rotate_right(ser):
-    _send_stepper_startstep(ser, -1)
+    _send_packet(ser, "STARTSTEP 1")
 
 def send_rotate_stop(ser):
-    _send_stepper_stopstep(ser)
+    _send_packet(ser, "STOPSTEP")
 
-def send_move_up(ser):
-    # Use shoulder servo for vertical movement
-    _send_servo_increment_start(ser, SHOULDER_ID, 1)
+# --- 2. SHOULDER (Up/Down) ---
+def send_shoulder(ser, angle):
+    # Angle 0-180
+    _send_packet(ser, f"{SHOULDER_ID} {angle}")
 
-def send_move_down(ser):
-    # Use shoulder servo for vertical movement
-    _send_servo_increment_start(ser, SHOULDER_ID, -1)
+# --- 3. ELBOW (Extend/Retract) ---
+def send_elbow(ser, angle):
+    _send_packet(ser, f"{ELBOW_ID} {angle}")
 
-def send_stop_move_vertical(ser):
-    _send_servo_increment_stop(ser)
+# --- 4. WRIST (Rotate) ---
+def send_wrist(ser, angle):
+    _send_packet(ser, f"{WRIST_ID} {angle}")
+
+# --- 5. GRIPPER (Open/Close) ---
+def send_grip(ser, is_closed):
+    angle = 160 if is_closed else 90 # 160=Closed, 90=Open
+    _send_packet(ser, f"{GRIP_L_ID} {angle}")
+    _send_packet(ser, f"{GRIP_R_ID} {angle}")
