@@ -9,13 +9,13 @@ class SimpleHandRecognizer:
         self.GRAB_THRESHOLD = 0.3
         
         # Movement settings (measured in millimeters from center)
-        self.CENTER_DEADZONE = 30.0  # Hand must move 60mm away from center to trigger
-        self.VERT_CENTER_DEADZONE = 20.0  # Hand must move 60mm away from center to trigger
+        self.CENTER_DEADZONE = 30.0  # Hand must move 30mm away from center to trigger
+        self.VERT_CENTER_DEADZONE = 20.0  # Hand must move 20mm away from vertical center
         self.VERT_CENTER = 40.0
     
     def analyze_hand(self, hand):
         """
-        Returns a tuple: (GripCommand, MoveCommand, DebugInfo)
+        Returns a tuple: (GripCommand, HorizontalMoveCommand, VerticalMoveCommand, DebugInfo)
         """
         debug_info = self._get_debug_info(hand)
         
@@ -28,11 +28,11 @@ class SimpleHandRecognizer:
             self.last_grip_gesture = current_grip
             grip_command = current_grip
 
-        # --- 2. Analyze Movement (Left/Right) ---
+        # --- 2. Analyze Horizontal Movement (Left/Right) ---
         current_horizontal_move = self._detect_horizontal_movement(hand)
         horizontal_move_command = None
-
-        # --- 2. Analyze Movement (Left/Right) ---
+        
+        # --- 3. Analyze Vertical Movement (Up/Down) ---
         current_vertical_move = self._detect_vertical_movement(hand)
         vertical_move_command = None        
         
@@ -48,21 +48,21 @@ class SimpleHandRecognizer:
         return grip_command, horizontal_move_command, vertical_move_command, debug_info
     
     def _detect_grip(self, hand):
+        # This logic seems to be based on an older Leap SDK.
+        # You might need to adjust based on your Leap SDK version.
+        # Assuming `hand.index` etc. are valid finger objects.
         fingers_extended = [
-            hand.thumb.is_extended, hand.index.is_extended,
-            hand.middle.is_extended, hand.ring.is_extended,
-            hand.pinky.is_extended
+            f.is_extended for f in hand.fingers
         ]
         extended_count = sum(fingers_extended)
         
-        if hand.grab_strength > self.GRAB_THRESHOLD and extended_count <= 1:
+        if hand.grab_strength > (1.0 - self.GRAB_THRESHOLD) and extended_count <= 1:
             return GestureType.CLOSED_HAND
         elif hand.grab_strength < 0.3 and extended_count >= 4:
             return GestureType.OPEN_HAND
         return None 
 
     def _detect_horizontal_movement(self, hand):
-        # hand.palm.position.x is usually in millimeters
         # Negative X is Left, Positive X is Right
         x_pos = hand.palm.position.x
         
@@ -74,30 +74,21 @@ class SimpleHandRecognizer:
             return GestureType.STOP_MOVE_HORIZONTAL
         
     def _detect_vertical_movement(self, hand):
-        # hand.palm.position.x is usually in millimeters
-        # Negative X is Left, Positive X is Right
+        # Using Z-axis for forward/backward, which we map to Up/Down
         z_pos = hand.palm.position.z
 
-
-
         if z_pos > self.VERT_CENTER and abs(self.VERT_CENTER - z_pos) > self.VERT_CENTER_DEADZONE:
-            return GestureType.MOVE_UP
+            return GestureType.MOVE_UP # Moving hand away from screen
         elif z_pos < self.VERT_CENTER and abs(self.VERT_CENTER - z_pos) > self.VERT_CENTER_DEADZONE:
-            return GestureType.MOVE_DOWN
+            return GestureType.MOVE_DOWN # Moving hand towards screen
         else:
             return GestureType.STOP_MOVE_VERTICAL     
         
     def _get_position(self, hand):
-        return (hand.palm.position.x, hand.palm.position.y)
+        return (hand.palm.position.x, hand.palm.position.y, hand.palm.position.z)
     
     def _get_debug_info(self, hand):
-        fingers_extended = [
-            hand.thumb.is_extended, hand.index.is_extended,
-            hand.middle.is_extended, hand.ring.is_extended,
-            hand.pinky.is_extended
-        ]
-        return {
-            'grab_strength': hand.grab_strength,
-            'extended_count': sum(fingers_extended),
-            'x_pos': hand.palm.position.x  # Added X position for debugging
-        }
+        x, y, z = self._get_position(hand)
+        extended_count = sum([f.is_extended for f in hand.fingers])
+        
+        return f"Pos:({x:.1f}, {y:.1f}, {z:.1f}), Grab:{hand.grab_strength:.2f}, Fingers:{extended_count}"
