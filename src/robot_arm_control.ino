@@ -1,75 +1,87 @@
 #include <Servo.h>
 #include <Stepper.h>
 
-// ---- Servo setup ----
-const int NUM_SERVOS = 4;
-const int servoPins[NUM_SERVOS] = {5, 6, 9, 10};
+// =============================================================
+// CONFIGURATION
+// =============================================================
+
+// ---- 1. STEPPER SETUP (Base Rotation) ----
+const int STEPS_PER_REV = 200; // Standard NEMA 17 is 200 steps/rev
+
+// Motor Shield Pins for Stepper (Uses Channel A + Channel B)
+// Do NOT connect servos to the blue screw terminals!
+#define DIR_A   12
+#define PWM_A   3
+#define BRAKE_A 9
+#define DIR_B   13
+#define PWM_B   11
+#define BRAKE_B 8
+
+Stepper baseStepper(STEPS_PER_REV, DIR_A, DIR_B);
+
+// ---- 2. SERVO SETUP (Arm Joints) ----
+const int NUM_SERVOS = 5;
+
+// Pin Mapping based on your list:
+// ID 0: Shoulder (Swinging Base) -> Pin 5
+// ID 1: Elbow                    -> Pin 10
+// ID 2: Wrist                    -> Pin 6
+// ID 3: Gripper Left             -> Pin A4
+// ID 4: Gripper Right            -> Pin A5
+const int servoPins[NUM_SERVOS] = {5, 10, 6, A4, A5};
+
 Servo servos[NUM_SERVOS];
-int positions[NUM_SERVOS];
+int servoPositions[NUM_SERVOS];
 
-// ---- Incrementing system (servos) ----
-bool servoIncrementing[NUM_SERVOS] = {false};
-int servoIncrementSpeed[NUM_SERVOS] = {0};
-unsigned long lastUpdateTime[NUM_SERVOS] = {0};
-
-// ---- Stepper setup ----
-const int stepsPerRevolution = 200;
-
-// Give the motor control pins names:
-#define pwmA 3
-#define pwmB 11
-#define brakeA 9
-#define brakeB 8
-#define dirA 12
-#define dirB 13
-#define stepperSpeed 60
-
-// Initialize the stepper library:
-Stepper myStepper = Stepper(stepsPerRevolution, dirA, dirB);
-
-// ---- Stepper auto-running system ----
-bool stepperRunning = false;
-int stepperRunSpeed = 0;          // steps per update
-unsigned long lastStepperUpdate = 0;
+// ---- Auto-Run Variables (for Stepper) ----
+bool stepperMoving = false;
+int stepperSpeed = 0; // Steps per loop cycle
+unsigned long lastStepperTime = 0;
 
 void setup() {
   Serial.begin(115200);
 
-  // Attach servos and initialize to 90 degrees
+  // --- Initialize Stepper Motor Driver ---
+  pinMode(PWM_A, OUTPUT);
+  pinMode(PWM_B, OUTPUT);
+  pinMode(BRAKE_A, OUTPUT);
+  pinMode(BRAKE_B, OUTPUT);
+
+  // Turn PWM ON and Brakes OFF (Critical for Stepper to work)
+  digitalWrite(PWM_A, HIGH);
+  digitalWrite(PWM_B, HIGH);
+  digitalWrite(BRAKE_A, LOW);
+  digitalWrite(BRAKE_B, LOW);
+
+  baseStepper.setSpeed(60); // Set default RPM
+
+  // --- Initialize Servos ---
   for (int i = 0; i < NUM_SERVOS; i++) {
     servos[i].attach(servoPins[i]);
-    positions[i] = 90;
-    servos[i].write(positions[i]);
+    servoPositions[i] = 90; // Default to center
+    servos[i].write(90);
   }
 
-  // Initialize stepper
-  pinMode(pwmA, OUTPUT);
-  pinMode(pwmB, OUTPUT);
-  pinMode(brakeA, OUTPUT);
-  pinMode(brakeB, OUTPUT);
-
-  digitalWrite(pwmA, HIGH);
-  digitalWrite(pwmB, HIGH);
-  digitalWrite(brakeA, LOW);
-  digitalWrite(brakeB, LOW);
-
-  myStepper.setSpeed(stepperSpeed);
-
-  Serial.println("Arduino ready - expecting packets:");
-  Serial.println("<id angle>");
-  Serial.println("STEP <steps>");
-  Serial.println("STARTINC <id> <speed>");
-  Serial.println("STOPINC <id>");
-  Serial.println("STARTSTEP <speed>");
-  Serial.println("STOPSTEP");
+  Serial.println("ROBOT ARM READY");
+  Serial.println("  BASE:     Stepper (A/B terminals)");
+  Serial.println("  SHOULDER: Servo ID 0 (Pin 5)");
+  Serial.println("  ELBOW:    Servo ID 1 (Pin 10)");
+  Serial.println("  WRIST:    Servo ID 2 (Pin 6)");
+  Serial.println("  GRIPPERS: Servo ID 3/4 (Pin A4/A5)");
+  Serial.println("");
+  Serial.println("COMMANDS:");
+  Serial.println("  STEP <steps>       -> Move Base manually");
+  Serial.println("  STARTSTEP <speed>  -> Spin Base continuously");
+  Serial.println("  STOPSTEP           -> Stop Base");
+  Serial.println("  <id> <angle>       -> Move Servo (e.g., '0 45')");
 }
 
 void loop() {
   static String input = "";
 
+  // Read Serial
   while (Serial.available() > 0) {
     char c = Serial.read();
-
     if (c == '\n') {
       processPacket(input);
       input = "";
@@ -78,26 +90,13 @@ void loop() {
     }
   }
 
-  unsigned long now = millis();
-
-  // --- handle servo auto-increment ---
-  for (int i = 0; i < NUM_SERVOS; i++) {
-    if (servoIncrementing[i]) {
-      if (now - lastUpdateTime[i] >= 50) {
-        lastUpdateTime[i] = now;
-
-        positions[i] += servoIncrementSpeed[i];
-        positions[i] = constrain(positions[i], 0, 180);
-        servos[i].write(positions[i]);
-      }
-    }
-  }
-
-  // --- handle stepper auto-run ---
-  if (stepperRunning) {
-    if (now - lastStepperUpdate >= 20) { // update every 20 ms
-      lastStepperUpdate = now;
-      myStepper.step(stepperRunSpeed);
+  // Handle Continuous Stepper Rotation
+  if (stepperMoving) {
+    unsigned long now = millis();
+    // Adjust the delay (10ms) to change max speed smoothness
+    if (now - lastStepperTime >= 10) {
+      lastStepperTime = now;
+      baseStepper.step(stepperSpeed);
     }
   }
 }
@@ -106,118 +105,51 @@ void processPacket(String packet) {
   packet.trim();
   if (packet.length() == 0) return;
 
-  Serial.print("Received packet: ");
-  Serial.println(packet);
-
-  // ---- STARTSTEP command ----
-  if (packet.startsWith("STARTSTEP")) {
-    int speed;
-    int count = sscanf(packet.c_str(), "STARTSTEP %d", &speed);
-
-    if (count != 1) {
-      Serial.println("Error: Use STARTSTEP <speed>");
-      return;
-    }
-
-    stepperRunning = true;
-    stepperRunSpeed = speed;
-
-    Serial.print("Stepper auto-run started with speed ");
-    Serial.println(speed);
-    return;
-  }
-
-  // ---- STOPSTEP command ----
-  if (packet.startsWith("STOPSTEP")) {
-    stepperRunning = false;
-    Serial.println("Stepper auto-run stopped");
-    return;
-  }
-
-  // ---- STARTINC command ----
-  if (packet.startsWith("STARTINC")) {
-    int id, speed;
-    int count = sscanf(packet.c_str(), "STARTINC %d %d", &id, &speed);
-
-    if (count != 2) {
-      Serial.println("Error: Use STARTINC <id> <speed>");
-      return;
-    }
-
-    if (id < 0 || id >= NUM_SERVOS) {
-      Serial.println("Error: Servo ID out of range");
-      return;
-    }
-
-    servoIncrementing[id] = true;
-    servoIncrementSpeed[id] = speed;
-
-    Serial.print("Increment started on servo ");
-    Serial.print(id);
-    Serial.print(" with speed ");
-    Serial.println(speed);
-    return;
-  }
-
-  // ---- STOPINC command ----
-  if (packet.startsWith("STOPINC")) {
-    int id;
-    int count = sscanf(packet.c_str(), "STOPINC %d", &id);
-
-    if (count != 1) {
-      Serial.println("Error: Use STOPINC <id>");
-      return;
-    }
-
-    if (id < 0 || id >= NUM_SERVOS) {
-      Serial.println("Error: Servo ID out of range");
-      return;
-    }
-
-    servoIncrementing[id] = false;
-
-    Serial.print("Increment stopped on servo ");
-    Serial.println(id);
-    return;
-  }
-
-  // ---- STEP command ----
+  // ---- STEPPER COMMANDS ----
+ 
+  // Manual Step: STEP <steps> (e.g. STEP 100)
   if (packet.startsWith("STEP")) {
     int steps;
     int count = sscanf(packet.c_str(), "STEP %d", &steps);
-
-    if (count != 1) {
-      Serial.println("Error: STEP command must be 'STEP <steps>'");
-      return;
+    if (count == 1) {
+      baseStepper.step(steps);
+      Serial.println("Stepped.");
     }
-
-    myStepper.step(steps);
-    Serial.print("Stepper moved by steps: ");
-    Serial.println(steps);
     return;
   }
 
-  // ---- Servo positioning command ----
+  // Continuous Spin: STARTSTEP <step_size> (e.g. STARTSTEP 1)
+  if (packet.startsWith("STARTSTEP")) {
+    int speed;
+    int count = sscanf(packet.c_str(), "STARTSTEP %d", &speed);
+    if (count == 1) {
+      stepperMoving = true;
+      stepperSpeed = speed;
+      Serial.println("Stepper Auto-Run ON");
+    }
+    return;
+  }
+
+  // Stop Spin: STOPSTEP
+  if (packet.startsWith("STOPSTEP")) {
+    stepperMoving = false;
+    Serial.println("Stepper Auto-Run OFF");
+    return;
+  }
+
+  // ---- SERVO COMMANDS (<id> <angle>) ----
   int id, angle;
   int count = sscanf(packet.c_str(), "%d %d", &id, &angle);
-
-  if (count != 2) {
-    Serial.println("Error: Packet must be '<id> <angle>'");
-    return;
+ 
+  if (count == 2) {
+    if (id >= 0 && id < NUM_SERVOS) {
+      angle = constrain(angle, 0, 180);
+      servos[id].write(angle);
+      servoPositions[id] = angle;
+      Serial.print("Servo "); Serial.print(id);
+      Serial.print(" -> "); Serial.println(angle);
+    } else {
+      Serial.println("Error: Servo ID must be 0-4");
+    }
   }
-
-  if (id < 0 || id >= NUM_SERVOS) {
-    Serial.println("Error: Servo ID out of range");
-    return;
-  }
-
-  angle = constrain(angle, 0, 180);
-  
-  servos[id].write(angle);
-  positions[id] = angle;
-
-  Serial.print("Servo ");
-  Serial.print(id);
-  Serial.print(" set to: ");
-  Serial.println(angle);
 }
