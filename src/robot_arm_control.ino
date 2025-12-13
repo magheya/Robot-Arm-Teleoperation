@@ -27,7 +27,7 @@ const int NUM_SERVOS = 5;
 // ID 2: Wrist                    -> Pin 6
 // ID 3: Gripper Left             -> Pin A4
 // ID 4: Gripper Right            -> Pin A5
-const int servoPins[NUM_SERVOS] = {5, 10, 6, A4, A5};
+const int servoPins[NUM_SERVOS] = {10, 6, A4, A5};
 
 Servo servos[NUM_SERVOS];
 int servoPositions[NUM_SERVOS];
