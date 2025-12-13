@@ -12,38 +12,52 @@ class RobotArmController:
         self._connect()
         
     def _connect(self):
-        port = '/dev/cu.usbmodem101' # CHECK THIS!
+        port = '/dev/cu.usbmodem101' # Update if needed
         try:
             self.arduino = serial.Serial(port, 115200, timeout=1)
             time.sleep(2)
             print(f"✅ Connected to Arduino on {port}")
         except Exception as e:
-            print(f"⚠️ SIMULATION MODE: {e}")
+            print(f"⚠️  SIMULATION MODE (No Robot Connected)")
             self.arduino = None
 
     def update(self, grip, base, shoulder, elbow, wrist):
-        if not self.arduino:
-            # print(f"SIM: Base={base} Shldr={shoulder} Elbw={elbow} Wrst={wrist} Grip={grip}")
-            return
+        # --- SIMULATION PRINTS (Continuous) ---
+        status_msg = ""
+        
+        # 1. Base Status
+        if base == GestureType.MOVE_LEFT: status_msg += "⬅️ BASE: LEFT   "
+        elif base == GestureType.MOVE_RIGHT: status_msg += "➡️ BASE: RIGHT  "
+        else: status_msg += "⏹ BASE: STOP   "
+        
+        # 2. Gripper Status
+        if grip == GestureType.CLOSED_HAND: status_msg += "| ✊ GRIP: CLOSE "
+        else: status_msg += "| 🖐 GRIP: OPEN  "
+        
+        # 3. Arm Height Status
+        status_msg += f"| ⬆️ ARM HEIGHT: {shoulder}°"
 
-        try:
-            # 1. Base (Stepper)
-            if base == GestureType.MOVE_LEFT: commands.send_rotate_left(self.arduino)
-            elif base == GestureType.MOVE_RIGHT: commands.send_rotate_right(self.arduino)
-            else: commands.send_rotate_stop(self.arduino)
+        # 4. Elbow Status
+        status_msg += f"| � elbow: {elbow}°"
 
-            # 2. Servos (Absolute Positioning)
-            # We send these every frame, which is fine because Arduino handles it fast
-            commands.send_shoulder(self.arduino, shoulder)
-            commands.send_elbow(self.arduino, elbow)
-            commands.send_wrist(self.arduino, wrist)
-            
-            # 3. Gripper
-            is_closed = (grip == GestureType.CLOSED_HAND)
-            commands.send_grip(self.arduino, is_closed)
-            
-        except Exception as e:
-            print(f"Serial Error: {e}")
+        # Print continuously (using \r to overwrite line for cleaner look, or normal print)
+        print(status_msg)
+
+        # --- SEND TO ARDUINO (If connected) ---
+        if self.arduino:
+            try:
+                if base == GestureType.MOVE_LEFT: commands.send_rotate_left(self.arduino)
+                elif base == GestureType.MOVE_RIGHT: commands.send_rotate_right(self.arduino)
+                else: commands.send_rotate_stop(self.arduino)
+
+                commands.send_shoulder(self.arduino, shoulder)
+                commands.send_elbow(self.arduino, elbow)
+                commands.send_wrist(self.arduino, wrist)
+                
+                is_closed = (grip == GestureType.CLOSED_HAND)
+                commands.send_grip(self.arduino, is_closed)
+            except Exception as e:
+                print(f"Serial Error: {e}")
 
 def main():
     cap = cv2.VideoCapture(0)
@@ -60,7 +74,7 @@ def main():
         success, image = cap.read()
         if not success: continue
         
-        image = cv2.flip(image, 1) # Mirror view
+        image = cv2.flip(image, 1)
         image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         results = hands.process(image_rgb)
         
@@ -71,12 +85,11 @@ def main():
                 # Analyze
                 grip, base, shoulder, elbow, wrist, debug = recognizer.analyze_hand(hand_landmarks.landmark)
                 
-                # Control
+                # Control & Print
                 controller.update(grip, base, shoulder, elbow, wrist)
                 
-                # Display Data
+                # Display Debug on Screen
                 cv2.putText(image, debug, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-                cv2.putText(image, f"Base: {base.name}", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
 
         cv2.imshow('Robot Arm Control', image)
         if cv2.waitKey(5) & 0xFF == ord('q'): break
