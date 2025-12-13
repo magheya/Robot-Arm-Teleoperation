@@ -2,100 +2,113 @@ import cv2
 import mediapipe as mp
 import serial
 import time
-import commands
-from utils import GestureType
 from cv_recognizer import CVHandRecognizer
+from utils import GestureType
+import commands # Your existing commands.py
 
-class RobotArmController:
-    def __init__(self):
-        self.arduino = None
-        self._connect()
-        
-    def _connect(self):
-        port = '/dev/cu.usbmodem101' # Update if needed
-        try:
-            self.arduino = serial.Serial(port, 115200, timeout=1)
-            time.sleep(2)
-            print(f"✅ Connected to Arduino on {port}")
-        except Exception as e:
-            print(f"⚠️  SIMULATION MODE (No Robot Connected)")
-            self.arduino = None
+# --- SETUP SERIAL ---
+# CHANGE 'COM3' TO YOUR PORT
+try:
+    ser = serial.Serial('COM3', 115200, timeout=1)
+    time.sleep(2) # Wait for Arduino restart
+    print("✅ Serial Connected")
+except:
+    print("⚠️ Serial NOT Connected (Debug Mode)")
+    ser = None
 
-    def update(self, grip, base, shoulder, elbow, wrist):
-        # --- SIMULATION PRINTS (Continuous) ---
-        status_msg = ""
-        
-        # 1. Base Status
-        if base == GestureType.MOVE_LEFT: status_msg += "⬅️ BASE: LEFT   "
-        elif base == GestureType.MOVE_RIGHT: status_msg += "➡️ BASE: RIGHT  "
-        else: status_msg += "⏹ BASE: STOP   "
-        
-        # 2. Gripper Status
-        if grip == GestureType.CLOSED_HAND: status_msg += "| ✊ GRIP: CLOSE "
-        else: status_msg += "| 🖐 GRIP: OPEN  "
-        
-        # 3. Arm Height Status
-        status_msg += f"| ⬆️ ARM HEIGHT: {shoulder}°"
+# --- SETUP MEDIAPIPE ---
+mp_hands = mp.solutions.hands
+hands = mp_hands.Hands(
+    min_detection_confidence=0.7, 
+    min_tracking_confidence=0.5,
+    max_num_hands=2 # ENABLE 2 HANDS
+)
+mp_draw = mp.solutions.drawing_utils
+cap = cv2.VideoCapture(0)
 
-        # 4. Elbow Status
-        status_msg += f"| � elbow: {elbow}°"
+recognizer = CVHandRecognizer()
+mode = "BIMANUAL" # Default mode
 
-        # Print continuously (using \r to overwrite line for cleaner look, or normal print)
-        print(status_msg)
+print("--- CONTROLLER STARTED ---")
+print("Press 'u' for Unimanual Mode")
+print("Press 'b' for Bimanual Mode")
+print("Press 'q' to Quit")
 
-        # --- SEND TO ARDUINO (If connected) ---
-        if self.arduino:
-            try:
-                if base == GestureType.MOVE_LEFT: commands.send_rotate_left(self.arduino)
-                elif base == GestureType.MOVE_RIGHT: commands.send_rotate_right(self.arduino)
-                else: commands.send_rotate_stop(self.arduino)
-
-                commands.send_shoulder(self.arduino, shoulder)
-                commands.send_elbow(self.arduino, elbow)
-                commands.send_wrist(self.arduino, wrist)
-                
-                is_closed = (grip == GestureType.CLOSED_HAND)
-                commands.send_grip(self.arduino, is_closed)
-            except Exception as e:
-                print(f"Serial Error: {e}")
-
-def main():
-    cap = cv2.VideoCapture(0)
-    mp_hands = mp.solutions.hands
-    hands = mp_hands.Hands(max_num_hands=1)
-    mp_draw = mp.solutions.drawing_utils
+while cap.isOpened():
+    ret, frame = cap.read()
+    if not ret: break
     
-    controller = RobotArmController()
-    recognizer = CVHandRecognizer()
+    # 1. Process Frame
+    frame = cv2.flip(frame, 1) # Mirror effect
+    rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    results = hands.process(rgb_frame)
     
-    print("📷 System Ready. Press 'q' to quit.")
-    
-    while cap.isOpened():
-        success, image = cap.read()
-        if not success: continue
-        
-        image = cv2.flip(image, 1)
-        image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        results = hands.process(image_rgb)
-        
-        if results.multi_hand_landmarks:
-            for hand_landmarks in results.multi_hand_landmarks:
-                mp_draw.draw_landmarks(image, hand_landmarks, mp_hands.HAND_CONNECTIONS)
-                
-                # Analyze
-                grip, base, shoulder, elbow, wrist, debug = recognizer.analyze_hand(hand_landmarks.landmark)
-                
-                # Control & Print
-                controller.update(grip, base, shoulder, elbow, wrist)
-                
-                # Display Debug on Screen
-                cv2.putText(image, debug, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+    right_hand = None
+    left_hand = None
 
-        cv2.imshow('Robot Arm Control', image)
-        if cv2.waitKey(5) & 0xFF == ord('q'): break
+    if results.multi_hand_landmarks:
+        for landmarks, handedness in zip(results.multi_hand_landmarks, results.multi_handedness):
+            label = handedness.classification[0].label # "Left" or "Right"
             
-    cap.release()
-    cv2.destroyAllWindows()
+            # Map MediaPipe Labels (which are mirrored)
+            # If flipped: 'Right' label usually means user's Left hand visually
+            # Let's trust label but verify with X coord if needed
+            if label == "Right": right_hand = landmarks.landmark
+            else: left_hand = landmarks.landmark
+            
+            mp_draw.draw_landmarks(frame, landmarks, mp_hands.HAND_CONNECTIONS)
 
-if __name__ == "__main__":
-    main()
+    # 2. Analyze Gestures
+    grip_cmd = GestureType.OPEN_HAND
+    base_cmd = GestureType.STOP_MOVE_HORIZONTAL
+    sh_angle, el_angle, wr_angle = 150, 90, 180
+    debug_str = "No Hands"
+
+    if mode == "BIMANUAL" and right_hand and left_hand:
+        # Require BOTH hands to act
+        grip_cmd, base_cmd, sh_angle, el_angle, wr_angle, debug_str = \
+            recognizer.analyze_bimanual(right_hand, left_hand)
+            
+    elif mode == "UNIMANUAL" and right_hand:
+        # Only uses Right hand
+        grip_cmd, base_cmd, sh_angle, el_angle, wr_angle, debug_str = \
+            recognizer.analyze_unimanual(right_hand)
+            
+    elif right_hand: # Fallback if only one hand in Bimanual
+        debug_str = "Waiting for Left Hand..."
+
+    # 3. Send to Robot (Only if Serial is connected)
+    if ser:
+        # Base
+        if base_cmd == GestureType.MOVE_LEFT: commands.send_rotate_left(ser)
+        elif base_cmd == GestureType.MOVE_RIGHT: commands.send_rotate_right(ser)
+        else: commands.send_rotate_stop(ser)
+        
+        # Arms
+        commands.send_shoulder(ser, sh_angle)
+        commands.send_elbow(ser, el_angle)
+        commands.send_wrist(ser, wr_angle)
+        
+        # Grip
+        is_closed = (grip_cmd == GestureType.CLOSED_HAND)
+        commands.send_grip(ser, is_closed)
+
+    # 4. Display UI
+    cv2.rectangle(frame, (0,0), (640, 60), (0,0,0), -1) # Top Bar
+    cv2.putText(frame, f"MODE: {mode}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+    cv2.putText(frame, debug_str, (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
+    
+    # Draw "Deadzone" lines for Base Control
+    cv2.line(frame, (int(640*0.4), 0), (int(640*0.4), 480), (100,100,100), 1)
+    cv2.line(frame, (int(640*0.6), 0), (int(640*0.6), 480), (100,100,100), 1)
+
+    cv2.imshow("Robot Controller", frame)
+
+    key = cv2.waitKey(1)
+    if key & 0xFF == ord('q'): break
+    if key & 0xFF == ord('u'): mode = "UNIMANUAL"
+    if key & 0xFF == ord('b'): mode = "BIMANUAL"
+
+cap.release()
+if ser: ser.close()
+cv2.destroyAllWindows()

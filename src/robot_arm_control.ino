@@ -1,139 +1,93 @@
 #include <Servo.h>
 #include <Stepper.h>
 
-// =============================================================
-// CONFIGURATION
-// =============================================================
+// --- STEPPER CONFIG ---
+const int STEPS_PER_REV = 200;
+Stepper myStepper(STEPS_PER_REV, 12, 13);
 
-// ---- 1. STEPPER SETUP (Base Rotation) ----
-const int STEPS_PER_REV = 200; // Standard NEMA 17 is 200 steps/rev
+// --- SERVO CONFIG ---
+Servo shoulder;
+Servo elbow;
+Servo wrist;
+Servo gripL;
+Servo gripR;
 
-// Motor Shield Pins for Stepper (Uses Channel A + Channel B)
-#define DIR_A   12
-#define PWM_A   3
-#define BRAKE_A 9
-#define DIR_B   13
-#define PWM_B   11
-#define BRAKE_B 8
+const int SHOULDER_PIN = 10; 
+const int ELBOW_PIN = 6;
+const int WRIST_PIN = 5;
+const int GRIP_L_PIN = A4; 
+const int GRIP_R_PIN = A5; 
 
-Stepper baseStepper(STEPS_PER_REV, DIR_A, DIR_B);
-
-// ---- 2. SERVO SETUP (Arm Joints) ----
-const int NUM_SERVOS = 5;
-
-// Pin Mapping based on your list:
-// ID 0: Shoulder (Swinging Base) -> Pin 5
-// ID 1: Elbow                    -> Pin 10
-// ID 2: Wrist                    -> Pin 6
-// ID 3: Gripper Left             -> Pin A4
-// ID 4: Gripper Right            -> Pin A5
-const int servoPins[NUM_SERVOS] = {5, 10, 6, A4, A5};
-
-Servo servos[NUM_SERVOS];
-int servoPositions[NUM_SERVOS];
-
-// ---- Auto-Run Variables (for Stepper) ----
-bool stepperMoving = false;
-int stepperSpeed = 0;
-unsigned long lastStepperTime = 0;
+// Variables for Stepper State
+char moveState = 'S'; 
 
 void setup() {
   Serial.begin(115200);
+  Serial.println("--- MANUAL INDEPENDENT CONTROL ---");
+  Serial.println("  Shoulder -> LOCKED 150 (Upright)");
+  Serial.println("  e <angle> -> Move Elbow ONLY");
+  Serial.println("  w <angle> -> Move Wrist ONLY");
+  Serial.println("  l <angle> -> Left Gripper");
+  Serial.println("  r <angle> -> Right Gripper");
+  Serial.println("  F/B/S    -> Stepper Control");
 
-  // --- Initialize Stepper Motor Driver ---
-  pinMode(PWM_A, OUTPUT);
-  pinMode(PWM_B, OUTPUT);
-  pinMode(BRAKE_A, OUTPUT);
-  pinMode(BRAKE_B, OUTPUT);
-  digitalWrite(PWM_A, HIGH);
-  digitalWrite(PWM_B, HIGH);
-  digitalWrite(BRAKE_A, LOW);
-  digitalWrite(BRAKE_B, LOW);
-  baseStepper.setSpeed(60);
+  // POWER SETUP
+  pinMode(3, OUTPUT); digitalWrite(3, HIGH);
+  pinMode(11, OUTPUT); digitalWrite(11, HIGH);
+  pinMode(9, OUTPUT); digitalWrite(9, LOW);
+  pinMode(8, OUTPUT); digitalWrite(8, LOW);
 
-  // --- Initialize Servos ---
-  for (int i = 0; i < NUM_SERVOS; i++) {
-    servos[i].attach(servoPins[i]);
-    servoPositions[i] = -90;
-    servos[i].write(-90);
-    Serial.println("Initialized Servo ID " + String(i) + " on Pin " + String(servoPins[i]) + " to -90°");
-  }
-
-  Serial.println("ROBOT ARM READY");
-  Serial.println("  BASE:     Stepper (A/B terminals)");
-  Serial.println("  SHOULDER: Servo ID 0 (Pin 5)");
-  Serial.println("  ELBOW:    Servo ID 1 (Pin 10)");
-  Serial.println("  WRIST:    Servo ID 2 (Pin 6)");
-  Serial.println("  GRIPPERS: Servo ID 3/4 (Pin A4/A5)");
-  Serial.println("");
-  Serial.println("COMMANDS:");
-  Serial.println("  STEP <steps>       -> Move Base manually");
-  Serial.println("  STARTSTEP <speed>  -> Spin Base continuously");
-  Serial.println("  STOPSTEP           -> Stop Base");
-  Serial.println("  <id> <angle>       -> Move Servo (e.g., '0 45')");
+  myStepper.setSpeed(5); // Slow speed for Torque
+  
+  // 1. SHOULDER (Fixed)
+  shoulder.attach(SHOULDER_PIN);
+  shoulder.write(150); 
+  
+  // 2. ELBOW (Start Bent)
+  elbow.attach(ELBOW_PIN);
+  elbow.write(120);
+  
+  // 3. WRIST (Start Tucked)
+  // This will stay at 180 until YOU change it. 
+  // Moving the elbow will NOT change this value.
+  wrist.attach(WRIST_PIN);
+  wrist.write(180);    
+  
+  // 4. GRIPPERS
+  gripL.attach(GRIP_L_PIN); gripL.write(90);
+  gripR.attach(GRIP_R_PIN); gripR.write(90);
 }
 
 void loop() {
-  static String input = "";
-  while (Serial.available() > 0) {
-    char c = Serial.read();
-    if (c == '\n') {
-      processPacket(input);
-      input = "";
-    } else {
-      input += c;
+  if (Serial.available() > 0) {
+    char cmd = Serial.read();
+
+    // --- ELBOW COMMAND ---
+    if (cmd == 'e') {
+      int angle = Serial.parseInt(); 
+      Serial.print("Elbow set to: "); Serial.println(angle);
+      elbow.write(angle);
     }
+    
+    // --- WRIST COMMAND ---
+    else if (cmd == 'w') {
+      int angle = Serial.parseInt();
+      Serial.print("Wrist set to: "); Serial.println(angle);
+      wrist.write(angle);
+    }
+    
+    // --- GRIPPERS ---
+    else if (cmd == 'l') gripL.write(Serial.parseInt());
+    else if (cmd == 'r') gripR.write(Serial.parseInt());
+    
+    // --- STEPPER ---
+    else if (cmd == 'F' || cmd == 'B' || cmd == 'S') {
+      moveState = cmd;
+    }
+    
+    while(Serial.available() > 0 && isSpace(Serial.peek())) Serial.read();
   }
 
-  // Handle Continuous Stepper Rotation
-  if (stepperMoving) {
-    unsigned long now = millis();
-    if (now - lastStepperTime >= 10) { 
-      lastStepperTime = now;
-      baseStepper.step(stepperSpeed);
-    }
-  }
-}
-
-void processPacket(String packet) {
-  packet.trim();
-  if (packet.length() == 0) return;
-
-  // ---- STEPPER COMMANDS ----
-  if (packet.startsWith("STEP")) {
-    int steps;
-    if (sscanf(packet.c_str(), "STEP %d", &steps) == 1) {
-      baseStepper.step(steps);
-      Serial.println("Stepped.");
-    }
-    return;
-  }
-  if (packet.startsWith("STARTSTEP")) {
-    int speed;
-    if (sscanf(packet.c_str(), "STARTSTEP %d", &speed) == 1) {
-      stepperMoving = true;
-      stepperSpeed = speed; 
-      Serial.println("Stepper Auto-Run ON");
-    }
-    return;
-  }
-  if (packet.startsWith("STOPSTEP")) {
-    stepperMoving = false;
-    Serial.println("Stepper Auto-Run OFF");
-    return;
-  }
-
-  // ---- SERVO DIRECT ANGLE COMMANDS ----
-  int id, angle;
-  if (sscanf(packet.c_str(), "%d %d", &id, &angle) == 2) {
-    if (id >= 0 && id < NUM_SERVOS) {
-      angle = constrain(angle, 0, 180);
-      servos[id].write(angle);
-      servoPositions[id] = angle;
-      Serial.print("Servo "); Serial.print(id);
-      Serial.print(" -> "); Serial.println(angle);
-    } else {
-      Serial.println("Error: Servo ID must be 0-4");
-    }
-  }
+  if (moveState == 'F') myStepper.step(1); 
+  else if (moveState == 'B') myStepper.step(-1); 
 }
