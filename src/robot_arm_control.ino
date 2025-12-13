@@ -27,7 +27,7 @@ const int NUM_SERVOS = 5;
 // ID 2: Wrist                    -> Pin 6
 // ID 3: Gripper Left             -> Pin A4
 // ID 4: Gripper Right            -> Pin A5
-const int servoPins[NUM_SERVOS] = {10, 6, A4, A5};
+const int servoPins[NUM_SERVOS] = {5, 10, 6, A4, A5};
 
 Servo servos[NUM_SERVOS];
 int servoPositions[NUM_SERVOS];
@@ -54,8 +54,9 @@ void setup() {
   // --- Initialize Servos ---
   for (int i = 0; i < NUM_SERVOS; i++) {
     servos[i].attach(servoPins[i]);
-    servoPositions[i] = 90;
-    servos[i].write(90);
+    servoPositions[i] = -90;
+    servos[i].write(-90);
+    Serial.println("Initialized Servo ID " + String(i) + " on Pin " + String(servoPins[i]) + " to -90°");
   }
 
   Serial.println("ROBOT ARM READY");
