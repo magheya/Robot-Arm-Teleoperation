@@ -1,41 +1,48 @@
 import time
 
-# --- SERVO ID MAPPING (Matches robot_arm_control.ino) ---
-SHOULDER_ID = 0  # Pin 5
-ELBOW_ID    = 1  # Pin 10
-WRIST_ID    = 2  # Pin 6
-GRIP_L_ID   = 3  # Pin A4
-GRIP_R_ID   = 4  # Pin A5
-
-def _send_packet(ser, packet):
-    msg = f"{packet}\n"
-    ser.write(msg.encode('utf-8'))
+def _send_command(ser, cmd_str):
+    """Encodes and sends a string command to Arduino."""
+    if ser:
+        full_cmd = f"{cmd_str}\n"
+        ser.write(full_cmd.encode('utf-8'))
+        # Optional: slight delay to not flood Arduino buffer if it's slow
+        # time.sleep(0.01) 
 
 # --- 1. BASE (Stepper) ---
+# Arduino expects: 'F' (Forward), 'B' (Backward), 'S' (Stop)
 def send_rotate_left(ser):
-    _send_packet(ser, "STARTSTEP -1")
+    _send_command(ser, "F") # Adjust direction if inverted
 
 def send_rotate_right(ser):
-    _send_packet(ser, "STARTSTEP 1")
+    _send_command(ser, "B") # Adjust direction if inverted
 
 def send_rotate_stop(ser):
-    _send_packet(ser, "STOPSTEP")
+    _send_command(ser, "S")
 
-# --- 2. SHOULDER (Up/Down) ---
+# --- 2. ARM JOINTS ---
+# Arduino expects: 's <angle>', 'e <angle>', 'w <angle>'
+
 def send_shoulder(ser, angle):
-    # Angle 0-180
-    _send_packet(ser, f"{SHOULDER_ID} {angle}")
+    # Map Python angle to Robot Limits if necessary
+    # Example: limit shoulder between 40 and 160
+    _send_command(ser, f"s {angle}")
 
-# --- 3. ELBOW (Extend/Retract) ---
 def send_elbow(ser, angle):
-    _send_packet(ser, f"{ELBOW_ID} {angle}")
+    _send_command(ser, f"e {angle}")
 
-# --- 4. WRIST (Rotate) ---
 def send_wrist(ser, angle):
-    _send_packet(ser, f"{WRIST_ID} {angle}")
+    # FULL RANGE (0 to 180) - No limits for testing
+    _send_command(ser, f"w {angle}")
 
-# --- 5. GRIPPER (Open/Close) ---
+
+# --- 3. GRIPPERS ---
+# Arduino expects: 'l <angle>' and 'r <angle>'
 def send_grip(ser, is_closed):
-    angle = 160 if is_closed else 90 # 160=Closed, 90=Open
-    _send_packet(ser, f"{GRIP_L_ID} {angle}")
-    _send_packet(ser, f"{GRIP_R_ID} {angle}")
+    if is_closed:
+        # FULL CLOSE (Try 0 first. If inverted, swap with 180)
+        _send_command(ser, "l 0") 
+        _send_command(ser, "r 0")
+    else:
+        # FULL OPEN (Removed the 90 limit, now sends 180)
+        _send_command(ser, "l 180")
+        _send_command(ser, "r 180")

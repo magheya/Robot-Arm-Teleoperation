@@ -120,3 +120,21 @@ class CVHandRecognizer:
         
         # If 3 or more fingers are folded, count as a fist
         return fingers_folded >= 3
+    
+    # Add this method inside your CVHandRecognizer class in cv_recognizer.py
+
+    def is_peace_sign(self, landmarks):
+        """
+        Detects a 'Peace' or 'Victory' sign (Index & Middle UP, others DOWN).
+        Used to toggle the Motor Lock.
+        """
+        # Finger Tips vs PIP (Knuckles)
+        # Tip < PIP means "Up" (because Y increases downwards)
+        
+        index_up = landmarks[8].y < landmarks[6].y
+        middle_up = landmarks[12].y < landmarks[10].y
+        ring_down = landmarks[16].y > landmarks[14].y
+        pinky_down = landmarks[20].y > landmarks[18].y
+        
+        # Strict check: Index/Middle UP, Ring/Pinky DOWN
+        return index_up and middle_up and ring_down and pinky_down
