@@ -49,36 +49,42 @@ class CVHandRecognizer:
 
     def analyze_unimanual(self, landmarks):
         """
-        UNIMANUAL MODE:
-        One hand does everything. Uses Tilt for Elbow control.
+        UNIMANUAL MODE (Revised):
+        - X/Y: Base & Shoulder (Same as before)
+        - Z (Reach): Hand Size (Push towards camera to reach)
+        - Grip: Fist
         """
         wrist = landmarks[0]
-        middle_finger_tip = landmarks[12]
-
-        # 1. Base (X-Axis)
+        # Use knuckles for stable size measurement (fingertips move too much)
+        index_mcp = landmarks[5]  
+        pinky_mcp = landmarks[17]
+        
+        # 1. Base (X-Axis) - Rate Control
         base_cmd = GestureType.STOP_MOVE_HORIZONTAL
         if wrist.x < 0.4: base_cmd = GestureType.MOVE_LEFT
         elif wrist.x > 0.6: base_cmd = GestureType.MOVE_RIGHT
 
-        # 2. Shoulder (Y-Axis)
+        # 2. Shoulder (Y-Axis) - Position Control
+        # Map Y (1.0=Bottom, 0.0=Top) to Angle (40-160)
         target_shoulder = int((1.0 - wrist.y) * 160)
         target_shoulder = max(40, min(160, target_shoulder))
 
-        # 3. Elbow (Hand Pitch / Tilt)
-        # Measure vertical distance between Wrist and Middle Finger Tip
-        # If Tip is ABOVE Wrist (High Y diff) -> Hand is Upright -> Retract
-        # If Tip is LEVEL with Wrist (Low Y diff) -> Hand is Flat -> Extend
-        tilt_diff = wrist.y - middle_finger_tip.y # Positive if fingers point up
+        # 3. Elbow (Z-Axis) - DEPTH / HAND SIZE MAPPING
+        # Calculate width of palm (Index Knuckle to Pinky Knuckle)
+        # This is more stable than wrist-to-tip
+        hand_width = math.hypot(index_mcp.x - pinky_mcp.x, index_mcp.y - pinky_mcp.y)
         
-        if tilt_diff > 0.15: 
-            # Fingers pointing UP -> Pull Back
-            target_elbow = 45 
-        elif tilt_diff < 0.05:
-            # Fingers pointing Forward/Down -> Reach Out
-            target_elbow = 120
-        else:
-            # Neutral -> Hold current (or middle)
-            target_elbow = self.smooth_elbow
+        # Calibration (Adjust these numbers based on your distance from camera!)
+        # Check the 'Debug' text on screen to see your current 'Size'
+        SIZE_FAR = 0.10   # Pulling back (Small hand)
+        SIZE_CLOSE = 0.20 # Pushing forward (Big hand)
+        
+        # Map Size to Elbow Angle (45=Retracted, 120=Extended)
+        # Normalize: (Value - Min) / (Max - Min)
+        depth_ratio = (hand_width - SIZE_FAR) / (SIZE_CLOSE - SIZE_FAR)
+        depth_ratio = max(0.0, min(1.0, depth_ratio)) # Clamp between 0 and 1
+        
+        target_elbow = int(45 + (depth_ratio * 75)) # 45 + range of 75 = 120 max
 
         # 4. Grip
         is_fist = self.is_fist(landmarks)
@@ -88,20 +94,29 @@ class CVHandRecognizer:
         self.smooth_shoulder = int(self.smooth_shoulder * (1 - self.alpha) + target_shoulder * self.alpha)
         self.smooth_elbow = int(self.smooth_elbow * (1 - self.alpha) + target_elbow * self.alpha)
 
-        # Auto-Tuck Wrist if moving base (Safety Feature)
+        # Safety: Tuck wrist if spinning base
         wrist_angle = 90
         if base_cmd != GestureType.STOP_MOVE_HORIZONTAL:
-            wrist_angle = 180 # Tuck in while spinning
+            wrist_angle = 180
 
-        debug = f"UNI | Tilt:{tilt_diff:.2f} Sh:{self.smooth_shoulder} El:{self.smooth_elbow}"
+        # Updated Debug String to help you calibrate
+        debug = f"UNI | Size:{hand_width:.2f} Sh:{self.smooth_shoulder} El:{self.smooth_elbow}"
         return grip_cmd, base_cmd, self.smooth_shoulder, self.smooth_elbow, wrist_angle, debug
-
+    
     def is_fist(self, landmarks):
-        # Simple check: Are finger tips below finger PIP joints?
+        # Check if fingers are folded
+        # Compare fingertip (TIP) Y vs knuckle (PIP) Y
+        # If tip is below knuckle (in screen coords where Y increases downwards), it's folded.
         fingers_folded = 0
-        # Index (8 vs 6), Middle (12 vs 10), Ring (16 vs 14), Pinky (20 vs 18)
+        
+        # Index Finger (Tip 8 vs PIP 6)
         if landmarks[8].y > landmarks[6].y: fingers_folded += 1
+        # Middle Finger (Tip 12 vs PIP 10)
         if landmarks[12].y > landmarks[10].y: fingers_folded += 1
+        # Ring Finger (Tip 16 vs PIP 14)
         if landmarks[16].y > landmarks[14].y: fingers_folded += 1
+        # Pinky Finger (Tip 20 vs PIP 18)
         if landmarks[20].y > landmarks[18].y: fingers_folded += 1
+        
+        # If 3 or more fingers are folded, count as a fist
         return fingers_folded >= 3
