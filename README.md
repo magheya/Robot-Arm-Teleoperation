@@ -3,7 +3,9 @@
 This project allows for real-time teleoperation of a simulated 6-DOF robot arm using a standard webcam. It leverages the MediaPipe library for robust hand tracking and the PyBullet physics engine for simulation.
 
 
-*(Suggestion: Record a GIF of the simulation in action and replace the link above!)*
+![Project Demonstration](src/sim_files/Demo%20Video.gif)
+
+
 
 ---
 
