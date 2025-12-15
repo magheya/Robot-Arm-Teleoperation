@@ -1,96 +1,133 @@
-# Webcam-Controlled Robot Arm Teleoperation
+# Robot Arm Teleoperation via Webcam
 
-This project enables real-time control of a multi-axis robotic arm using hand gestures captured via a standard webcam. It uses MediaPipe for advanced hand tracking and gesture recognition in Python, communicating with an Arduino for precise, low-level motor control.
+This project allows for real-time teleoperation of a simulated 6-DOF robot arm using a standard webcam. It leverages the MediaPipe library for robust hand tracking and the PyBullet physics engine for simulation.
 
-The system supports two primary modes:
-*   **Bimanual Mode:** Uses two hands for intuitive, concurrent control over aiming and action.
-*   **Unimanual Mode:** Uses a single hand to control all axes, including depth-based control for arm extension.
 
-## 🛠 Hardware Requirements
+![Project Demonstration](src/sim_files/Demo%20Video.gif)
 
-*   **Arduino Uno**
-*   **Arduino Motor Shield R3** (Critical: The firmware is specifically designed for this shield)
-*   **Webcam** (for hand tracking)
-*   **Robot Arm Components:**
-    *   1x Bipolar Stepper Motor (Base Rotation)
-    *   5x Servo Motors (Shoulder, Elbow, Wrist, and a two-servo Gripper)
-*   **External Power Supply** (9V - 12V DC) - *Required to drive the motors*
 
-## 🔌 Wiring Guide
 
-**⚠️ Important:** The firmware (`src/robot_arm_control.ino`) uses hardcoded pins. The stepper motor connects to the Motor Shield's screw terminals, while the servos connect to the digital and analog pins.
+---
 
-| Robot Part | Motor Type | Connection on Arduino/Shield | Firmware Pin Name |
-| :--- | :--- | :--- | :--- |
-| **Base Rotation** | Stepper Motor | **Channel A & B** Screw Terminals | `myStepper` (Pins 12, 13, 3, 11) |
-| **Shoulder** | Servo | **Pin 10** | `SHOULDER_PIN` |
-| **Elbow** | Servo | **Pin 6** | `ELBOW_PIN` |
-| **Wrist** | Servo | **Pin 5** | `WRIST_PIN` |
-| **Left Gripper** | Servo | **Pin A4** | `GRIP_L_PIN` |
-| **Right Gripper** | Servo | **Pin A5** | `GRIP_R_PIN` |
-| **Power** | DC Input | **Vin / GND** Screw Terminals | - |
+## Features
 
-*Note: Do not power the motors solely from USB. Connect an external battery or power adapter to the Arduino's barrel jack or the shield's Vin terminals.*
+- **Real-time Control:** Control the robot arm in real-time using hand movements.
+- **Dual Control Modes:** Switch between two-handed (Bimanual) and single-handed (Unimanual) control.
+- **Intuitive Zoned Controls:** The screen is split into dedicated zones for left and right hands to prevent accidental inputs.
+- **Physics Simulation:** Utilizes PyBullet to simulate realistic movements, gravity, and object interactions.
+- **Object Manipulation:** Pick up and place objects in the simulated environment.
+- **Visual Feedback:** On-screen markers and text provide clear feedback on control zones, modes, and arm status.
+- **Live Reset:** Reset the simulation to its initial state at any time with a keypress.
 
-## 💻 Software Setup
+---
 
-### 1. Arduino Firmware
-1.  Open `src/robot_arm_control.ino` in the Arduino IDE.
-2.  Ensure the standard `Servo` and `Stepper` libraries are installed.
-3.  Upload the sketch to your Arduino Uno.
+## Control Scheme
 
-### 2. Python Controller
-1.  Install the required Python dependencies. It is recommended to use a virtual environment.
+The control mapping is designed to be as intuitive as possible.
+
+### Bimanual Mode (Two Hands)
+
+This mode offers the most granular control by dedicating each hand to specific functions.
+
+| Hand        | Movement                 | Robot Control          |
+|-------------|--------------------------|------------------------|
+| **Right Hand** | Up / Down (Y-axis)       | Shoulder Angle         |
+|             | Left / Right (X-axis)    | Base Rotation          |
+|             | Forward / Back (Z-axis)  | Elbow Angle            |
+| **Left Hand**  | Up / Down (Y-axis)       | Wrist Angle            |
+|             | Gesture (Open/Close)     | Gripper (Open/Close)   |
+
+### Unimanual Mode (One Hand)
+
+This mode allows for full control using only the right hand.
+
+| Hand        | Movement                 | Robot Control          |
+|-------------|--------------------------|------------------------|
+| **Right Hand** | Up / Down (Y-axis)       | Shoulder Angle         |
+|             | Left / Right (X-axis)    | Base Rotation          |
+|             | Forward / Back (Z-axis)  | Elbow Angle            |
+|             | Gesture (Open/Close)     | Gripper (Open/Close)   |
+
+---
+
+## Setup and Installation
+
+### Prerequisites
+- Python 3.8+
+
+### Installation Steps
+
+1.  **Clone the repository:**
     ```bash
-    pip install opencv-python mediapipe pyserial
+    git clone <your-repository-url>
+    cd Robot-Arm-Teleoperation
     ```
-2.  Identify the COM port your Arduino is connected to (e.g., `COM3` on Windows).
-3.  Update the `SERIAL_PORT` variable in the main script you intend to run (e.g., `src/cv_main.py`).
-4.  Run the main controller:
+
+2.  **Create and activate a virtual environment (recommended):**
     ```bash
-    python src/cv_main.py
+    # For Windows
+    python -m venv venv
+    .\venv\Scripts\activate
+
+    # For macOS/Linux
+    python3 -m venv venv
+    source venv/bin/activate
     ```
 
-## ✋ Control Modes
+3.  **Install the required packages:**
+    Create a file named `requirements.txt` in the root directory with the following content:
+    ```
+    opencv-python
+    mediapipe
+    pybullet
+    ```
+    Then, run the installation command:
+    ```bash
+    pip install -r requirements.txt
+    ```
 
-The main application (`cv_main.py`) starts in Bimanual mode. You can switch modes by pressing keys in the OpenCV window.
+---
 
-*   Press **`b`** for **Bimanual Mode**.
-*   Press **`u`** for **Unimanual Mode**.
-*   Press **`q`** to quit.
+## How to Run
 
-### Bimanual Controls (Two Hands)
+Execute the main script from the root directory:
 
-This mode offers the most intuitive control by splitting tasks between hands.
+```bash
+py src/cv_main_sim.py
+```
 
-| Hand | Gesture | Robot Action |
-| :--- | :--- | :--- |
-| **Right Hand** | Move Left / Right | Rotates Base Left / Right |
-| | Move Up / Down | Raises / Lowers Shoulder |
-| **Left Hand** | Move Up / Down | Extends / Retracts Elbow (Reach) |
-| | Make a Fist | Closes Gripper |
-| | Open Hand | Opens Gripper |
+A window will appear showing your webcam feed and the PyBullet simulation.
 
-### Unimanual Controls (One Hand)
+### Keyboard Controls
 
-This mode maps all controls to a single hand (the right hand).
+-   `b`: Switch to **Bimanual** Mode.
+-   `u`: Switch to **Unimanual** Mode.
+-   `r`: **Reset** the simulation state.
+-   `q`: **Quit** the application.
 
-| Gesture | Robot Action |
-| :--- | :--- |
-| **Move Hand Left / Right** | Rotates Base Left / Right |
-| **Move Hand Up / Down** | Raises / Lowers Shoulder |
-| **Move Hand Closer/Farther** | Extends / Retracts Elbow (Depth) |
-| **Make a Fist** | Closes Gripper |
-| **Open Hand** | Opens Gripper |
-| **Make a Peace Sign** | Toggles a "Motor Lock" to freeze the arm in place. |
+---
 
-## 📂 Project Structure
+## Project Structure
 
-*   **`src/cv_main.py`**: The main application for webcam control. Connects to the camera and Arduino, and allows switching between control modes.
-*   **`src/robot_arm_control.ino`**: Arduino firmware that listens for serial commands (e.g., `"e 90"`, `"S"`) to control the stepper and five servos.
-*   **`src/cv_recognizer.py`**: The core logic engine. Converts MediaPipe hand landmark data into robot commands for both unimanual and bimanual modes.
-*   **`src/commands.py`**: Helper script that formats high-level actions into the specific serial command strings expected by the Arduino.
-*   **`src/utils.py`**: Contains shared enumerations for gesture types (e.g., `MOVE_LEFT`, `CLOSED_HAND`).
-*   **`src/main_unimanual.py` / `main_bimanual.py`**: Standalone scripts for testing each control mode individually.
-*   **`src/test_*.py`**: A suite of scripts for testing and calibrating individual joints (elbow, wrist, gripper, etc.).
-*   **`src/main.py`**: (Legacy) The original implementation using a Leap Motion controller.
+```
+Robot-Arm-Teleoperation/
+│
+├── src/
+│   ├── cv_main_sim.py      # Main application: camera, UI, main loop
+│   ├── cv_recognizer.py    # Translates hand landmarks into robot commands
+│   ├── simulator.py        # Manages the PyBullet simulation and physics
+│   ├── utils.py            # Shared utilities (e.g., GestureType enum)
+│   └── sim_files/
+│       └── robot_arm.urdf  # The URDF model of the robot arm
+│
+└── README.md               # This file
+```
+
+---
+
+## Future Development Ideas
+
+- **Physical Robot Integration:** Adapt the controller to send commands to a real robot arm via serial or a network protocol.
+- **Unity/Unreal Engine Integration:** Replace PyBullet with a high-fidelity game engine for enhanced graphics and simulation capabilities.
+- **Complex Tasks:** Create scenarios with multiple objects and specific goals (e.g., stacking blocks, sorting colors).
+- **Advanced Gesture Recognition:** Train a custom machine learning model to recognize a wider variety of gestures for more complex commands.
