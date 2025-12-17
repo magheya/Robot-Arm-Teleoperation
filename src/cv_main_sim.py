@@ -20,10 +20,11 @@ mp_draw = mp.solutions.drawing_utils
 cap = cv2.VideoCapture(0)
 
 recognizer = CVHandRecognizer()
-mode = "BIMANUAL"
+mode = "UNIMANUAL"
 
 # --- State for Base Rotation ---
 base_angle = 0.0
+sh_angle = 0.0
 BASE_ROTATION_SPEED = 1.0
 
 print("--- SIMULATION CONTROLLER STARTED ---")
@@ -57,7 +58,8 @@ while cap.isOpened() and sim.physicsClient is not None:
     # 2. Analyze Gestures
     grip_cmd = GestureType.OPEN_HAND
     base_cmd = GestureType.STOP_MOVE_HORIZONTAL
-    sh_angle, el_angle, wr_angle = -45, 45, 45 
+    sh_cmd = GestureType.STOP_MOVE_VERTICAL
+    el_angle, wr_angle =  45, 45 
     debug_str = "No Hands"
 
     if mode == "BIMANUAL" and right_hand and left_hand:
@@ -65,7 +67,7 @@ while cap.isOpened() and sim.physicsClient is not None:
             recognizer.analyze_bimanual(right_hand, left_hand)
             
     elif mode == "UNIMANUAL" and right_hand:
-        grip_cmd, base_cmd, sh_angle, el_angle, wr_angle, debug_str = \
+        grip_cmd, base_cmd, sh_cmd, el_angle, wr_angle, debug_str = \
             recognizer.analyze_unimanual(right_hand)
             
     elif right_hand: debug_str = "BIMANUAL: Waiting for Left Hand"
@@ -74,23 +76,32 @@ while cap.isOpened() and sim.physicsClient is not None:
     # 3. Send to Simulator
     if base_cmd == GestureType.MOVE_LEFT: base_angle += BASE_ROTATION_SPEED
     elif base_cmd == GestureType.MOVE_RIGHT: base_angle -= BASE_ROTATION_SPEED
+
+    print('command: ', sh_cmd, sh_angle)
+
+    if sh_cmd == GestureType.MOVE_UP: sh_angle += BASE_ROTATION_SPEED
+    elif sh_cmd == GestureType.MOVE_DOWN: sh_angle -= BASE_ROTATION_SPEED
     
     base_angle = max(-150, min(150, base_angle))
     sim.set_joint_angle("base_joint", base_angle)
     
+
+    sh_angle = max(-150, min(150, sh_angle))
     sim.set_joint_angle("shoulder_joint", sh_angle)
-    sim.set_joint_angle("elbow_joint", el_angle)
-    sim.set_joint_angle("wrist_joint", wr_angle)
+
+    # ignore other joints for now
+    # sim.set_joint_angle("elbow_joint", el_angle)
+    # sim.set_joint_angle("wrist_joint", wr_angle)
     
     # --- Gripper Logic ---
     # 1. Animate the gripper fingers for visual effect
-    grip_target_angle = 40 if (grip_cmd == GestureType.CLOSED_HAND) else 0
-    sim.set_joint_angle("left_gripper_joint", grip_target_angle)
-    sim.set_joint_angle("right_gripper_joint", grip_target_angle)
+    # grip_target_angle = 40 if (grip_cmd == GestureType.CLOSED_HAND) else 0
+    # sim.set_joint_angle("left_gripper_joint", grip_target_angle)
+    # sim.set_joint_angle("right_gripper_joint", grip_target_angle)
 
     # 2. Handle the picking/placing physics
-    grip_command_str = "CLOSE" if grip_cmd == GestureType.CLOSED_HAND else "OPEN"
-    sim.control_gripper(grip_command_str)
+    # grip_command_str = "CLOSE" if grip_cmd == GestureType.CLOSED_HAND else "OPEN"
+    # sim.control_gripper(grip_command_str)
 
     sim.step()
 
@@ -116,6 +127,7 @@ while cap.isOpened() and sim.physicsClient is not None:
     if key & 0xFF == ord('r'):
         sim.reset()
         base_angle = 0.0 # Also reset the controller's internal state
+        sh_angle = 0.0
 
 cap.release()
 sim.close()

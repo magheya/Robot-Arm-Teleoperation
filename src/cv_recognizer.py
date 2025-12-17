@@ -63,8 +63,14 @@ class CVHandRecognizer:
         if rh_wrist.x < 0.7: base_cmd = GestureType.MOVE_LEFT
         elif rh_wrist.x > 0.8: base_cmd = GestureType.MOVE_RIGHT
 
-        sh_angle = self._map_value(rh_wrist.y, 0.8, 0.2, 0, -90)
-        sh_angle = max(-90, min(0, sh_angle))
+        sh_cmd = GestureType.STOP_MOVE_VERTICAL
+        if rh_wrist.y > 0.6: sh_cmd = GestureType.MOVE_UP
+        elif rh_wrist.y < 0.4: sh_cmd = GestureType.MOVE_DOWN 
+
+        # for the wrist lets do palm angl
+
+        # sh_angle = self._map_value(rh_wrist.y, 0.8, 0.2, 0, -90)
+        # sh_angle = max(-90, min(0, sh_angle))
 
         el_angle = self._map_value(rh_wrist.z, 1e-7, 8e-7, 150, 0)
         print('ELBOW Z:', rh_wrist.z, '-> Angle:', el_angle)
@@ -74,5 +80,5 @@ class CVHandRecognizer:
 
         grip_cmd = self._get_grip_gesture(right_hand)
 
-        debug_str = f"Grip:{grip_cmd.name} | Base:{base_cmd.name} | Sh:{int(sh_angle)} El:{int(el_angle)} Wr:{int(wr_angle)}"
-        return grip_cmd, base_cmd, sh_angle, el_angle, wr_angle, debug_str
+        debug_str = f"Grip:{grip_cmd.name} | Base:{base_cmd.name} | Sh:{int(sh_cmd)} El:{int(el_angle)} Wr:{int(wr_angle)}"
+        return grip_cmd, base_cmd, sh_cmd, el_angle, wr_angle, debug_str

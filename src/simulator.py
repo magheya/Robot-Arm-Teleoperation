@@ -25,6 +25,29 @@ class RobotSimulator:
         self.object_id = p.loadURDF("cube_small.urdf", self.initial_object_pos)
         self.gripped_constraint_id = None
 
+
+        # --- Camera state ---
+        self.cam_distance = 1.2
+        self.cam_yaw = 50
+        self.cam_pitch = -35
+        self.cam_target = [0, 0, 0.4]
+
+        # Initialize camera
+        p.resetDebugVisualizerCamera(
+            cameraDistance=self.cam_distance,
+            cameraYaw=self.cam_yaw,
+            cameraPitch=self.cam_pitch,
+            cameraTargetPosition=self.cam_target
+        )        
+
+        p.setPhysicsEngineParameter(
+            fixedTimeStep=1.0 / 240.0,
+            numSolverIterations=200,
+            numSubSteps=4,
+            enableConeFriction=1,
+            erp=0.2
+        )
+
     def set_joint_angle(self, joint_name, angle_degrees):
         if joint_name in self.joint_indices:
             angle_radians = math.radians(angle_degrees)
@@ -106,3 +129,24 @@ class RobotSimulator:
         }
         for name, angle in home_pose.items():
             p.resetJointState(self.robotId, self.joint_indices[name], targetValue=math.radians(angle))
+
+    def update_camera(self):
+        p.resetDebugVisualizerCamera(
+            cameraDistance=self.cam_distance,
+            cameraYaw=self.cam_yaw,
+            cameraPitch=self.cam_pitch,
+            cameraTargetPosition=self.cam_target
+        )
+
+    def orbit_camera(self, yaw_delta=0, pitch_delta=0):
+        self.cam_yaw += yaw_delta
+        self.cam_pitch = max(-89, min(89, self.cam_pitch))
+        self.update_camera()
+
+    def zoom_camera(self, delta):
+        self.cam_distance = max(0.3, self.cam_distance + delta)
+        self.update_camera()
+
+    def set_camera_target(self, target):
+        self.cam_target = target
+        self.update_camera()            
