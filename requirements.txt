@@ -2,3 +2,4 @@ build
 cffi
 opencv-python
 numpy
+mediapipe
