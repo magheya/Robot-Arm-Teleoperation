@@ -95,8 +95,8 @@ def create_table(x, y, top_z):
     p.createMultiBody(0, col, vis, [x, y, top_z - half[2]])
 
 # ---- Layout B (recommended) ----
-TABLE_X = 0.48              # was 0.55 (too far)
-PICK_Y, PLACE_Y = -0.28, 0.28  # was ±0.35 (too wide)
+TABLE_X = 0.48
+PICK_Y, PLACE_Y = -0.28, 0.28
 TABLE_Z = 0.26
 
 create_table(TABLE_X, PICK_Y, TABLE_Z)
@@ -107,7 +107,6 @@ create_table(TABLE_X, PLACE_Y, TABLE_Z)
 # =============================
 CUBE_SIZE = 0.04
 
-# place cube slightly toward table center (optional but helps)
 cube_start = [TABLE_X, PICK_Y + 0.03, TABLE_Z + CUBE_SIZE / 2]
 cube = p.loadURDF("cube_small.urdf", cube_start, globalScaling=0.8)
 
@@ -136,8 +135,9 @@ JOINT_VEL = {
     "ELBOW":    1.3,
 }
 
-DEADZONE_TOP = 0.45
-DEADZONE_BOTTOM = 0.55
+# ✅ CHANGE 1: BIGGER DEADZONE
+DEADZONE_TOP = 0.42
+DEADZONE_BOTTOM = 0.58
 
 PINCH_CLOSE = 0.04
 PINCH_OPEN  = 0.07
@@ -149,9 +149,8 @@ GRIP_FORCE = 100
 # ASSISTED GRASP (OPTION A)
 # XY + Z threshold (NOT a sphere)
 # =============================
-# Widened slightly for robustness with webcam control
-GRASP_XY_THRESH = 0.065   # was 0.045
-GRASP_Z_THRESH  = 0.055   # was 0.035
+GRASP_XY_THRESH = 0.065
+GRASP_Z_THRESH  = 0.055
 
 # Visual halo
 HALO_RADIUS = 0.075
@@ -194,6 +193,9 @@ def get_grasp_point():
         return (lf + rf) * 0.5
     return np.array(p.getLinkState(robot, HAND_LINK)[0])
 
+# ✅ CHANGE 2: Detect "pinch CLOSE event" (edge trigger)
+pinch_state = "OPEN"  # OPEN or CLOSED
+
 # =============================
 # MAIN LOOP
 # =============================
@@ -215,10 +217,14 @@ while True:
             (int(w*(i*0.25+0.125))-45, 30),
             cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255,255,255), 2)
 
-    # ---------- UI: deadzone ----------
+    # ---------- UI: deadzone (TRANSPARENT) ----------
     top_y = int(h * DEADZONE_TOP)
     bot_y = int(h * DEADZONE_BOTTOM)
-    cv2.rectangle(frame, (0, top_y), (w, bot_y), (60,60,60), -1)
+
+    overlay = frame.copy()
+    cv2.rectangle(overlay, (0, top_y), (w, bot_y), (60,60,60), -1)
+    frame = cv2.addWeighted(overlay, 0.25, frame, 0.75, 0)  # transparent band
+
     cv2.line(frame, (0, top_y), (w, top_y), (0,255,0), 2)
     cv2.line(frame, (0, bot_y), (w, bot_y), (0,255,0), 2)
 
@@ -230,6 +236,9 @@ while True:
     active_region = "NONE"
     grip = 0.04
     pinch_val = None
+
+    pinch_close_event = False
+    pinch_open_event = False
 
     if res.multi_hand_landmarks:
         mp_draw.draw_landmarks(frame, res.multi_hand_landmarks[0], mp_hands.HAND_CONNECTIONS)
@@ -254,17 +263,22 @@ while True:
         elif cy > DEADZONE_BOTTOM:
             joint_vel[jid] = -JOINT_VEL[active_region]
 
-        # Pinch → gripper (works in ANY region)
+        # Pinch value
         thumb = lm[mp_hands.HandLandmark.THUMB_TIP]
         index = lm[mp_hands.HandLandmark.INDEX_FINGER_TIP]
         pinch_val = float(np.linalg.norm(
             np.array([thumb.x, thumb.y]) - np.array([index.x, index.y])
         ))
 
-        if pinch_val < PINCH_CLOSE:
-            grip = 0.0
-        elif pinch_val > PINCH_OPEN:
-            grip = 0.04
+        # Pinch state machine (edge trigger)
+        if pinch_state == "OPEN" and pinch_val < PINCH_CLOSE:
+            pinch_state = "CLOSED"
+            pinch_close_event = True
+        elif pinch_state == "CLOSED" and pinch_val > PINCH_OPEN:
+            pinch_state = "OPEN"
+            pinch_open_event = True
+
+        grip = 0.0 if pinch_state == "CLOSED" else 0.04
 
     # ---------- Apply VELOCITY control ----------
     p.setJointMotorControl2(robot, BASE_J, p.VELOCITY_CONTROL,
@@ -298,9 +312,9 @@ while True:
     p.changeVisualShape(halo_body, -1, rgbaColor=halo_color)
     p.resetBasePositionAndOrientation(halo_body, cube_pos, [0, 0, 0, 1])
 
-    # Snap grasp ONLY when user closes gripper AND graspable
-    if grip < 0.01 and not cube_attached and graspable:
-        # small “assist”: align cube to grasp point before fixing (optional but helps)
+    # ✅ CHANGE 2: Attach on pinch CLOSE EVENT (not just "grip < 0.01")
+    if pinch_close_event and (not cube_attached) and graspable:
+        # small “assist”: align cube to grasp point before fixing
         p.resetBasePositionAndOrientation(cube, grasp_point.tolist(), [0, 0, 0, 1])
 
         cid = p.createConstraint(
@@ -309,8 +323,8 @@ while True:
         )
         cube_attached = True
 
-    # Release ends trial
-    if grip > 0.02 and cube_attached:
+    # Release ends trial (on pinch OPEN event)
+    if pinch_open_event and cube_attached:
         p.removeConstraint(cid)
         cube_attached = False
 
@@ -331,11 +345,11 @@ while True:
                 cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
 
     if pinch_val is not None:
-        cv2.putText(frame, f"PINCH: {pinch_val:.3f} | GRIP={'CLOSE' if grip < 0.01 else 'OPEN'}",
+        cv2.putText(frame, f"PINCH: {pinch_val:.3f} | STATE: {pinch_state}",
                     (10, h - 15), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
     else:
-        cv2.putText(frame, "PINCH: --", (10, h - 15),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+        cv2.putText(frame, "PINCH: --",
+                    (10, h - 15), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
 
     cv2.imshow("Unimanual Gesture Control – Velocity + Assisted Grasp", frame)
     if cv2.waitKey(1) & 0xFF == 27:
