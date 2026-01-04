@@ -54,7 +54,6 @@ WRIST_J    = joint_name_to_id["panda_joint6"]
 FINGER_L_J = joint_name_to_id["panda_finger_joint1"]
 FINGER_R_J = joint_name_to_id["panda_finger_joint2"]
 
-# These are LINKS (not joints) for fingertips — better grasp point
 LEFT_FINGER_LINK  = link_name_to_id.get("panda_leftfinger", None)
 RIGHT_FINGER_LINK = link_name_to_id.get("panda_rightfinger", None)
 
@@ -62,7 +61,6 @@ if HAND_LINK is None:
     raise RuntimeError("Could not find panda_link8")
 
 if LEFT_FINGER_LINK is None or RIGHT_FINGER_LINK is None:
-    # fallback: use hand link (still works), but less accurate
     print("[WARN] Could not find panda_leftfinger / panda_rightfinger links. Falling back to panda_link8 for grasp point.")
 
 LOCKED_JOINTS = ["panda_joint3", "panda_joint5", "panda_joint7"]
@@ -83,7 +81,7 @@ for j, v in neutral.items():
     p.resetJointState(robot, joint_name_to_id[j], v)
 
 # =============================
-# TABLES (SAME HEIGHT) — Layout B (closer + less lateral)
+# TABLES (Layout B)
 # =============================
 def create_table(x, y, top_z):
     half = [0.22, 0.22, 0.05]
@@ -94,7 +92,6 @@ def create_table(x, y, top_z):
     )
     p.createMultiBody(0, col, vis, [x, y, top_z - half[2]])
 
-# ---- Layout B (recommended) ----
 TABLE_X = 0.48
 PICK_Y, PLACE_Y = -0.28, 0.28
 TABLE_Z = 0.26
@@ -135,7 +132,7 @@ JOINT_VEL = {
     "ELBOW":    1.3,
 }
 
-# ✅ CHANGE 1: BIGGER DEADZONE
+# ✅ bigger deadzone
 DEADZONE_TOP = 0.42
 DEADZONE_BOTTOM = 0.58
 
@@ -146,13 +143,11 @@ ARM_FORCE = 90
 GRIP_FORCE = 100
 
 # =============================
-# ASSISTED GRASP (OPTION A)
-# XY + Z threshold (NOT a sphere)
+# ASSISTED GRASP
 # =============================
 GRASP_XY_THRESH = 0.065
 GRASP_Z_THRESH  = 0.055
 
-# Visual halo
 HALO_RADIUS = 0.075
 halo_vis = p.createVisualShape(
     p.GEOM_SPHERE,
@@ -174,9 +169,7 @@ SUCCESS_THRESH = 0.03
 
 if not os.path.exists(LOG_FILE):
     with open(LOG_FILE, "w", newline="") as f:
-        csv.writer(f).writerow(
-            ["participant", "trial", "time", "placement_error", "success"]
-        )
+        csv.writer(f).writerow(["participant", "trial", "time", "placement_error", "success"])
 
 trial = 0
 trial_start = time.time()
@@ -184,180 +177,200 @@ cube_attached = False
 cid = None
 
 def get_grasp_point():
-    """
-    Use midpoint of fingertip LINKS (best). If not available, fallback to hand link.
-    """
+    """Midpoint of fingertip LINKS (best). If not available, fallback to hand link position."""
     if LEFT_FINGER_LINK is not None and RIGHT_FINGER_LINK is not None:
         lf = np.array(p.getLinkState(robot, LEFT_FINGER_LINK)[0])
         rf = np.array(p.getLinkState(robot, RIGHT_FINGER_LINK)[0])
         return (lf + rf) * 0.5
     return np.array(p.getLinkState(robot, HAND_LINK)[0])
 
-# ✅ CHANGE 2: Detect "pinch CLOSE event" (edge trigger)
+def create_fixed_constraint_preserve_pose(parent_body, parent_link, child_body):
+    """
+    Create a fixed constraint that preserves the current relative pose between parent link and child body.
+    This prevents the cube snapping into the wrist.
+    """
+    ee_pos, ee_orn = p.getLinkState(parent_body, parent_link)[:2]
+    cube_pos, cube_orn = p.getBasePositionAndOrientation(child_body)
+
+    inv_pos, inv_orn = p.invertTransform(ee_pos, ee_orn)
+    parent_frame_pos, parent_frame_orn = p.multiplyTransforms(inv_pos, inv_orn, cube_pos, cube_orn)
+
+    return p.createConstraint(
+        parentBodyUniqueId=parent_body,
+        parentLinkIndex=parent_link,
+        childBodyUniqueId=child_body,
+        childLinkIndex=-1,
+        jointType=p.JOINT_FIXED,
+        jointAxis=[0, 0, 0],
+        parentFramePosition=parent_frame_pos,
+        childFramePosition=[0, 0, 0],
+        parentFrameOrientation=parent_frame_orn,
+        childFrameOrientation=[0, 0, 0, 1],
+    )
+
+# pinch edge-trigger
 pinch_state = "OPEN"  # OPEN or CLOSED
 
 # =============================
 # MAIN LOOP
 # =============================
-while True:
-    ret, frame = cap.read()
-    if not ret:
-        break
+try:
+    while True:
+        if not p.isConnected():
+            print("[ERROR] PyBullet disconnected (GUI closed or crashed). Exiting cleanly.")
+            break
 
-    frame = cv2.flip(frame, 1)
-    h, w, _ = frame.shape
+        ret, frame = cap.read()
+        if not ret:
+            break
 
-    # ---------- UI: regions ----------
-    splits = [0.25, 0.50, 0.75]
-    labels = ["BASE", "SHOULDER", "WRIST", "ELBOW"]
-    for s in splits:
-        cv2.line(frame, (int(w*s), 0), (int(w*s), h), (255,255,255), 2)
-    for i,l in enumerate(labels):
-        cv2.putText(frame, l,
-            (int(w*(i*0.25+0.125))-45, 30),
-            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255,255,255), 2)
+        frame = cv2.flip(frame, 1)
+        h, w, _ = frame.shape
 
-    # ---------- UI: deadzone (TRANSPARENT) ----------
-    top_y = int(h * DEADZONE_TOP)
-    bot_y = int(h * DEADZONE_BOTTOM)
+        # ---------- UI: regions ----------
+        splits = [0.25, 0.50, 0.75]
+        labels = ["BASE", "SHOULDER", "WRIST", "ELBOW"]
+        for s in splits:
+            cv2.line(frame, (int(w*s), 0), (int(w*s), h), (255,255,255), 2)
+        for i, l in enumerate(labels):
+            cv2.putText(frame, l,
+                        (int(w*(i*0.25+0.125))-45, 30),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255,255,255), 2)
 
-    overlay = frame.copy()
-    cv2.rectangle(overlay, (0, top_y), (w, bot_y), (60,60,60), -1)
-    frame = cv2.addWeighted(overlay, 0.25, frame, 0.75, 0)  # transparent band
+        # ---------- UI: deadzone (TRANSPARENT) ----------
+        top_y = int(h * DEADZONE_TOP)
+        bot_y = int(h * DEADZONE_BOTTOM)
 
-    cv2.line(frame, (0, top_y), (w, top_y), (0,255,0), 2)
-    cv2.line(frame, (0, bot_y), (w, bot_y), (0,255,0), 2)
+        overlay = frame.copy()
+        cv2.rectangle(overlay, (0, top_y), (w, bot_y), (60,60,60), -1)
+        frame = cv2.addWeighted(overlay, 0.22, frame, 0.78, 0)
+        cv2.line(frame, (0, top_y), (w, top_y), (0,255,0), 2)
+        cv2.line(frame, (0, bot_y), (w, bot_y), (0,255,0), 2)
 
-    # ---------- Default: zero velocity ----------
-    joint_vel = {BASE_J: 0.0, SHOULDER_J: 0.0, WRIST_J: 0.0, ELBOW_J: 0.0}
+        # ---------- Default velocities ----------
+        joint_vel = {BASE_J: 0.0, SHOULDER_J: 0.0, WRIST_J: 0.0, ELBOW_J: 0.0}
 
-    # ---------- Hand tracking ----------
-    res = hands.process(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
-    active_region = "NONE"
-    grip = 0.04
-    pinch_val = None
+        # ---------- Hand tracking ----------
+        res = hands.process(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+        active_region = "NONE"
+        grip = 0.04
+        pinch_val = None
 
-    pinch_close_event = False
-    pinch_open_event = False
+        pinch_close_event = False
+        pinch_open_event = False
 
-    if res.multi_hand_landmarks:
-        mp_draw.draw_landmarks(frame, res.multi_hand_landmarks[0], mp_hands.HAND_CONNECTIONS)
+        if res.multi_hand_landmarks:
+            mp_draw.draw_landmarks(frame, res.multi_hand_landmarks[0], mp_hands.HAND_CONNECTIONS)
 
-        lm = res.multi_hand_landmarks[0].landmark
-        cx = np.mean([pt.x for pt in lm])
-        cy = np.mean([pt.y for pt in lm])
+            lm = res.multi_hand_landmarks[0].landmark
+            cx = np.mean([pt.x for pt in lm])
+            cy = np.mean([pt.y for pt in lm])
 
-        # Region selection
-        if cx < 0.25:
-            active_region = "BASE";     jid = BASE_J
-        elif cx < 0.50:
-            active_region = "SHOULDER"; jid = SHOULDER_J
-        elif cx < 0.75:
-            active_region = "WRIST";    jid = WRIST_J
+            # Region selection
+            if cx < 0.25:
+                active_region = "BASE";     jid = BASE_J
+            elif cx < 0.50:
+                active_region = "SHOULDER"; jid = SHOULDER_J
+            elif cx < 0.75:
+                active_region = "WRIST";    jid = WRIST_J
+            else:
+                active_region = "ELBOW";    jid = ELBOW_J
+
+            # Direction
+            if cy < DEADZONE_TOP:
+                joint_vel[jid] = +JOINT_VEL[active_region]
+            elif cy > DEADZONE_BOTTOM:
+                joint_vel[jid] = -JOINT_VEL[active_region]
+
+            # Pinch value
+            thumb = lm[mp_hands.HandLandmark.THUMB_TIP]
+            index = lm[mp_hands.HandLandmark.INDEX_FINGER_TIP]
+            pinch_val = float(np.linalg.norm(
+                np.array([thumb.x, thumb.y]) - np.array([index.x, index.y])
+            ))
+
+            # Edge-trigger pinch
+            if pinch_state == "OPEN" and pinch_val < PINCH_CLOSE:
+                pinch_state = "CLOSED"
+                pinch_close_event = True
+            elif pinch_state == "CLOSED" and pinch_val > PINCH_OPEN:
+                pinch_state = "OPEN"
+                pinch_open_event = True
+
+            grip = 0.0 if pinch_state == "CLOSED" else 0.04
+
+        # ---------- Apply VELOCITY control ----------
+        p.setJointMotorControl2(robot, BASE_J, p.VELOCITY_CONTROL,
+                                targetVelocity=joint_vel[BASE_J], force=ARM_FORCE)
+        p.setJointMotorControl2(robot, SHOULDER_J, p.VELOCITY_CONTROL,
+                                targetVelocity=joint_vel[SHOULDER_J], force=ARM_FORCE)
+        p.setJointMotorControl2(robot, WRIST_J, p.VELOCITY_CONTROL,
+                                targetVelocity=joint_vel[WRIST_J], force=ARM_FORCE)
+        p.setJointMotorControl2(robot, ELBOW_J, p.VELOCITY_CONTROL,
+                                targetVelocity=joint_vel[ELBOW_J], force=ARM_FORCE)
+
+        p.setJointMotorControl2(robot, FINGER_L_J, p.POSITION_CONTROL, grip, force=GRIP_FORCE)
+        p.setJointMotorControl2(robot, FINGER_R_J, p.POSITION_CONTROL, grip, force=GRIP_FORCE)
+
+        for jn in LOCKED_JOINTS:
+            jid = joint_name_to_id[jn]
+            p.setJointMotorControl2(robot, jid, p.POSITION_CONTROL, neutral[jn], force=ARM_FORCE)
+
+        # ---------- Assisted grasp detection ----------
+        cube_pos, _ = p.getBasePositionAndOrientation(cube)
+        cube_pos_np = np.array(cube_pos)
+
+        grasp_point = get_grasp_point()
+        xy_dist = float(np.linalg.norm(grasp_point[:2] - cube_pos_np[:2]))
+        z_dist  = float(abs(grasp_point[2] - cube_pos_np[2]))
+        graspable = (xy_dist < GRASP_XY_THRESH) and (z_dist < GRASP_Z_THRESH)
+
+        # Update halo
+        halo_color = [0, 1, 0, 0.25] if graspable else [1, 0, 0, 0.18]
+        p.changeVisualShape(halo_body, -1, rgbaColor=halo_color)
+        p.resetBasePositionAndOrientation(halo_body, cube_pos, [0, 0, 0, 1])
+
+        # ✅ Attach on pinch CLOSE EVENT AND graspable (no teleport, preserve pose)
+        if pinch_close_event and (not cube_attached) and graspable:
+            cid = create_fixed_constraint_preserve_pose(robot, HAND_LINK, cube)
+            cube_attached = True
+
+        # Release on pinch OPEN EVENT
+        if pinch_open_event and cube_attached:
+            p.removeConstraint(cid)
+            cube_attached = False
+
+            err = np.linalg.norm(np.array(p.getBasePositionAndOrientation(cube)[0]) - TARGET_POS)
+            duration = time.time() - trial_start
+
+            with open(LOG_FILE, "a", newline="") as f:
+                csv.writer(f).writerow([PARTICIPANT_ID, trial, round(duration, 3),
+                                        round(err, 4), int(err < SUCCESS_THRESH)])
+
+            trial += 1
+            trial_start = time.time()
+            p.resetBasePositionAndOrientation(cube, cube_start, [0, 0, 0, 1])
+
+        # ---------- HUD ----------
+        cv2.putText(frame, f"ACTIVE: {active_region}", (10, h - 45),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+
+        if pinch_val is not None:
+            cv2.putText(frame, f"PINCH: {pinch_val:.3f} | STATE: {pinch_state}",
+                        (10, h - 15), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
         else:
-            active_region = "ELBOW";    jid = ELBOW_J
+            cv2.putText(frame, "PINCH: --",
+                        (10, h - 15), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
 
-        # Direction (UP/DOWN)
-        if cy < DEADZONE_TOP:
-            joint_vel[jid] = +JOINT_VEL[active_region]
-        elif cy > DEADZONE_BOTTOM:
-            joint_vel[jid] = -JOINT_VEL[active_region]
+        cv2.imshow("Unimanual Gesture Control – Velocity + Assisted Grasp", frame)
+        if cv2.waitKey(1) & 0xFF == 27:
+            break
 
-        # Pinch value
-        thumb = lm[mp_hands.HandLandmark.THUMB_TIP]
-        index = lm[mp_hands.HandLandmark.INDEX_FINGER_TIP]
-        pinch_val = float(np.linalg.norm(
-            np.array([thumb.x, thumb.y]) - np.array([index.x, index.y])
-        ))
+        p.stepSimulation()
+        time.sleep(1/240)
 
-        # Pinch state machine (edge trigger)
-        if pinch_state == "OPEN" and pinch_val < PINCH_CLOSE:
-            pinch_state = "CLOSED"
-            pinch_close_event = True
-        elif pinch_state == "CLOSED" and pinch_val > PINCH_OPEN:
-            pinch_state = "OPEN"
-            pinch_open_event = True
-
-        grip = 0.0 if pinch_state == "CLOSED" else 0.04
-
-    # ---------- Apply VELOCITY control ----------
-    p.setJointMotorControl2(robot, BASE_J, p.VELOCITY_CONTROL,
-                            targetVelocity=joint_vel[BASE_J], force=ARM_FORCE)
-    p.setJointMotorControl2(robot, SHOULDER_J, p.VELOCITY_CONTROL,
-                            targetVelocity=joint_vel[SHOULDER_J], force=ARM_FORCE)
-    p.setJointMotorControl2(robot, WRIST_J, p.VELOCITY_CONTROL,
-                            targetVelocity=joint_vel[WRIST_J], force=ARM_FORCE)
-    p.setJointMotorControl2(robot, ELBOW_J, p.VELOCITY_CONTROL,
-                            targetVelocity=joint_vel[ELBOW_J], force=ARM_FORCE)
-
-    p.setJointMotorControl2(robot, FINGER_L_J, p.POSITION_CONTROL, grip, force=GRIP_FORCE)
-    p.setJointMotorControl2(robot, FINGER_R_J, p.POSITION_CONTROL, grip, force=GRIP_FORCE)
-
-    for jn in LOCKED_JOINTS:
-        jid = joint_name_to_id[jn]
-        p.setJointMotorControl2(robot, jid, p.POSITION_CONTROL, neutral[jn], force=ARM_FORCE)
-
-    # ---------- Assisted snap grasp (XY + Z) using fingertip midpoint ----------
-    cube_pos, _ = p.getBasePositionAndOrientation(cube)
-    cube_pos_np = np.array(cube_pos)
-
-    grasp_point = get_grasp_point()
-
-    xy_dist = float(np.linalg.norm(grasp_point[:2] - cube_pos_np[:2]))
-    z_dist  = float(abs(grasp_point[2] - cube_pos_np[2]))
-    graspable = (xy_dist < GRASP_XY_THRESH) and (z_dist < GRASP_Z_THRESH)
-
-    # Update halo color + position
-    halo_color = [0, 1, 0, 0.25] if graspable else [1, 0, 0, 0.18]
-    p.changeVisualShape(halo_body, -1, rgbaColor=halo_color)
-    p.resetBasePositionAndOrientation(halo_body, cube_pos, [0, 0, 0, 1])
-
-    # ✅ CHANGE 2: Attach on pinch CLOSE EVENT (not just "grip < 0.01")
-    if pinch_close_event and (not cube_attached) and graspable:
-        # small “assist”: align cube to grasp point before fixing
-        p.resetBasePositionAndOrientation(cube, grasp_point.tolist(), [0, 0, 0, 1])
-
-        cid = p.createConstraint(
-            robot, HAND_LINK, cube, -1,
-            p.JOINT_FIXED, [0, 0, 0], [0, 0, 0], [0, 0, 0]
-        )
-        cube_attached = True
-
-    # Release ends trial (on pinch OPEN event)
-    if pinch_open_event and cube_attached:
-        p.removeConstraint(cid)
-        cube_attached = False
-
-        err = np.linalg.norm(np.array(p.getBasePositionAndOrientation(cube)[0]) - TARGET_POS)
-        duration = time.time() - trial_start
-
-        with open(LOG_FILE, "a", newline="") as f:
-            csv.writer(f).writerow(
-                [PARTICIPANT_ID, trial, round(duration, 3), round(err, 4), int(err < SUCCESS_THRESH)]
-            )
-
-        trial += 1
-        trial_start = time.time()
-        p.resetBasePositionAndOrientation(cube, cube_start, [0, 0, 0, 1])
-
-    # ---------- HUD ----------
-    cv2.putText(frame, f"ACTIVE: {active_region}", (10, h - 45),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-
-    if pinch_val is not None:
-        cv2.putText(frame, f"PINCH: {pinch_val:.3f} | STATE: {pinch_state}",
-                    (10, h - 15), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-    else:
-        cv2.putText(frame, "PINCH: --",
-                    (10, h - 15), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-
-    cv2.imshow("Unimanual Gesture Control – Velocity + Assisted Grasp", frame)
-    if cv2.waitKey(1) & 0xFF == 27:
-        break
-
-    p.stepSimulation()
-    time.sleep(1 / 240)
-
-cap.release()
-cv2.destroyAllWindows()
-p.disconnect()
+finally:
+    cap.release()
+    cv2.destroyAllWindows()
+    if p.isConnected():
+        p.disconnect()
