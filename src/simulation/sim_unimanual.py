@@ -104,15 +104,18 @@ create_table(TABLE_X, PLACE_Y, TABLE_Z)
 # =============================
 CUBE_SIZE = 0.05
 
-cube_start = [TABLE_X, PICK_Y + 0.03, TABLE_Z + CUBE_SIZE / 2]
-cube = p.loadURDF("cube_small.urdf", cube_start, globalScaling=0.8)
+# Default/base positions (used by trial condition setters)
+BASE_CUBE_POS = np.array([TABLE_X, PICK_Y + 0.03, TABLE_Z + CUBE_SIZE / 2], dtype=float)
+BASE_TARGET_POS = np.array([TABLE_X, PLACE_Y - 0.03, TABLE_Z + CUBE_SIZE / 2], dtype=float)
 
-TARGET_POS = np.array([TABLE_X, PLACE_Y - 0.03, TABLE_Z + CUBE_SIZE / 2])
+cube = p.loadURDF("cube_small.urdf", BASE_CUBE_POS.tolist(), globalScaling=0.8)
+
+# ---- Target body (keep ID so we can move it per trial) ----
 target_vis = p.createVisualShape(
     p.GEOM_CYLINDER, radius=0.05, length=0.002,
     rgbaColor=[1, 0, 0, 0.7]
 )
-p.createMultiBody(0, baseVisualShapeIndex=target_vis, basePosition=TARGET_POS)
+target_body = p.createMultiBody(0, baseVisualShapeIndex=target_vis, basePosition=BASE_TARGET_POS.tolist())
 
 # =============================
 # MEDIAPIPE
@@ -157,34 +160,75 @@ halo_vis = p.createVisualShape(
 halo_body = p.createMultiBody(
     baseMass=0,
     baseVisualShapeIndex=halo_vis,
-    basePosition=cube_start
+    basePosition=BASE_CUBE_POS.tolist()
 )
 
 # =============================
-# EXPERIMENT LOGGING  (UPDATED)
+# EXPERIMENT LOGGING  (FINAL)
 # =============================
 PARTICIPANT_ID = "P01"
 LOG_FILE = f"results_{PARTICIPANT_ID}_unimanual.csv"
 SUCCESS_THRESH = 0.05
 
-N_TRIALS = 5  # ✅ run exactly 5 trials then stop
+# ------------------------------------------------------------
+# FACTOR A: Transport distance (D)
+#   - cube fixed at BASE_CUBE_POS
+#   - target moves (easy/medium/hard)
+# FACTOR B: Grasp difficulty
+#   - target fixed at BASE_TARGET_POS
+#   - cube moves (easy/medium/hard)
+#
+# 2 reps each difficulty => 6 trials per factor => 12 total trials
+# ------------------------------------------------------------
+N_REPS_PER_LEVEL = 2
+LEVELS = ["easy", "medium", "hard"]
 
-# New metrics:
-# - time_to_grasp: time from trial start to first attachment
-# - grasp_attempts: number of pinch-close events (attempts) during trial
-# - drops: number of times cube was released while not at target (unintended drops)
+# Target positions for transport-distance difficulty (Factor A)
+TARGET_Y_BY_LEVEL = {
+    "easy":   float(BASE_TARGET_POS[1] - 0.10),
+    "medium": float(BASE_TARGET_POS[1]),
+    "hard":   float(BASE_TARGET_POS[1] + 0.10),
+}
 
+# Cube positions for grasp difficulty (Factor B) (reach/lateral difficulty)
+# Note: We keep z constant and keep within table bounds.
+# - easy: closer to robot and less lateral offset (more reachable)
+# - medium: baseline (your current)
+# - hard: a bit farther and more lateral (harder reach / alignment)
+CUBE_POS_BY_LEVEL = {
+    "easy":   np.array([TABLE_X - 0.06, PICK_Y + 0.02, BASE_CUBE_POS[2]], dtype=float),
+    "medium": BASE_CUBE_POS.copy(),
+    "hard":   np.array([TABLE_X + 0.06, PICK_Y - 0.06, BASE_CUBE_POS[2]], dtype=float),
+}
+
+# Build full trial plan (12 trials)
+TRIAL_PLAN = []
+for _ in range(N_REPS_PER_LEVEL):
+    for lvl in LEVELS:
+        TRIAL_PLAN.append({"factor": "transport_distance", "difficulty": lvl})
+for _ in range(N_REPS_PER_LEVEL):
+    for lvl in LEVELS:
+        TRIAL_PLAN.append({"factor": "grasp_difficulty", "difficulty": lvl})
+
+N_TRIALS = len(TRIAL_PLAN)
+
+# CSV header (kept your metrics + added factor/difficulty/geometry)
 if not os.path.exists(LOG_FILE):
     with open(LOG_FILE, "w", newline="") as f:
         csv.writer(f).writerow([
             "participant",
             "trial",
+            "factor",
+            "difficulty",
+            "D",
             "time_total",
             "time_to_grasp",
             "placement_error",
             "success",
             "grasp_attempts",
             "drops",
+            "cube_x", "cube_y", "cube_z",
+            "target_x", "target_y", "target_z",
         ])
 
 trial = 0
@@ -192,13 +236,19 @@ trial_start = time.time()
 cube_attached = False
 cid = None
 
-# ✅ per-trial counters/state
+# Per-trial counters/state
 grasp_attempts = 0
 drops = 0
-time_to_grasp = None  # set when first attached
+time_to_grasp = None
+
+# current condition vars (updated per trial)
+current_factor = TRIAL_PLAN[0]["factor"]
+current_difficulty = TRIAL_PLAN[0]["difficulty"]
+current_cube_pos = BASE_CUBE_POS.copy()
+current_target_pos = BASE_TARGET_POS.copy()
+current_D = float(np.linalg.norm(current_cube_pos - current_target_pos))
 
 def reset_trial_state():
-    """Reset per-trial counters and state (keeps your environment the same)."""
     global trial_start, cube_attached, cid, grasp_attempts, drops, time_to_grasp
     trial_start = time.time()
     cube_attached = False
@@ -208,7 +258,6 @@ def reset_trial_state():
     time_to_grasp = None
 
 def get_grasp_point():
-    """Midpoint of fingertip LINKS (best). If not available, fallback to hand link position."""
     if LEFT_FINGER_LINK is not None and RIGHT_FINGER_LINK is not None:
         lf = np.array(p.getLinkState(robot, LEFT_FINGER_LINK)[0])
         rf = np.array(p.getLinkState(robot, RIGHT_FINGER_LINK)[0])
@@ -216,10 +265,6 @@ def get_grasp_point():
     return np.array(p.getLinkState(robot, HAND_LINK)[0])
 
 def create_fixed_constraint_preserve_pose(parent_body, parent_link, child_body):
-    """
-    Create a fixed constraint that preserves the current relative pose between parent link and child body.
-    This prevents the cube snapping into the wrist.
-    """
     ee_pos, ee_orn = p.getLinkState(parent_body, parent_link)[:2]
     cube_pos, cube_orn = p.getBasePositionAndOrientation(child_body)
 
@@ -242,10 +287,48 @@ def create_fixed_constraint_preserve_pose(parent_body, parent_link, child_body):
 def near_target(pos, target, thresh):
     return float(np.linalg.norm(np.array(pos) - np.array(target))) < float(thresh)
 
+def set_trial_condition(trial_idx: int):
+    """
+    Apply the trial condition:
+      - Factor A: cube fixed, target moves
+      - Factor B: target fixed, cube moves
+    """
+    global current_factor, current_difficulty, current_cube_pos, current_target_pos, current_D
+
+    cond = TRIAL_PLAN[trial_idx]
+    current_factor = cond["factor"]
+    current_difficulty = cond["difficulty"]
+
+    # Default to baselines
+    current_cube_pos = BASE_CUBE_POS.copy()
+    current_target_pos = BASE_TARGET_POS.copy()
+
+    if current_factor == "transport_distance":
+        # cube fixed, target varies
+        current_target_pos = np.array([BASE_TARGET_POS[0], TARGET_Y_BY_LEVEL[current_difficulty], BASE_TARGET_POS[2]], dtype=float)
+
+    elif current_factor == "grasp_difficulty":
+        # target fixed, cube varies
+        current_cube_pos = CUBE_POS_BY_LEVEL[current_difficulty].copy()
+
+    # Apply in sim
+    p.resetBasePositionAndOrientation(cube, current_cube_pos.tolist(), [0, 0, 0, 1])
+    p.resetBasePositionAndOrientation(target_body, current_target_pos.tolist(), [0, 0, 0, 1])
+
+    # Reset halo to cube position (cosmetic)
+    p.resetBasePositionAndOrientation(halo_body, current_cube_pos.tolist(), [0, 0, 0, 1])
+
+    # Compute transport distance D between cube and target
+    current_D = float(np.linalg.norm(current_cube_pos - current_target_pos))
+
 # pinch edge-trigger
-pinch_state = "OPEN"  # OPEN or CLOSED
-release_start_time = None  # Tracks when the release "began"
-RELEASE_DELAY = 0.6  # Seconds to wait before actually releasing
+pinch_state = "OPEN"
+release_start_time = None
+RELEASE_DELAY = 0.6
+
+# Initialize first trial
+set_trial_condition(0)
+reset_trial_state()
 
 # =============================
 # MAIN LOOP
@@ -280,7 +363,6 @@ try:
         # ---------- UI: deadzone (TRANSPARENT) ----------
         top_y = int(h * DEADZONE_TOP)
         bot_y = int(h * DEADZONE_BOTTOM)
-
         overlay = frame.copy()
         cv2.rectangle(overlay, (0, top_y), (w, bot_y), (60,60,60), -1)
         frame = cv2.addWeighted(overlay, 0.22, frame, 0.78, 0)
@@ -329,29 +411,21 @@ try:
                 np.array([thumb.x, thumb.y]) - np.array([index.x, index.y])
             ))
 
-            # ----------------------------------------------------
-            #  DELAYED RELEASE LOGIC
-            # ----------------------------------------------------
-            # 1. Detect CLOSE (Immediate)
+            # ---- DELAYED RELEASE LOGIC ----
             if pinch_state == "OPEN" and pinch_val < PINCH_CLOSE:
                 pinch_state = "CLOSED"
                 pinch_close_event = True
-                release_start_time = None  # Reset timer immediately if we close
+                release_start_time = None
 
-            # 2. Detect OPEN (Delayed)
             elif pinch_state == "CLOSED":
                 if pinch_val > PINCH_OPEN:
-                    # Pinch is open, start timer if not already started
                     if release_start_time is None:
                         release_start_time = time.time()
-
-                    # Check if timer exceeded
                     elif (time.time() - release_start_time) > RELEASE_DELAY:
                         pinch_state = "OPEN"
                         pinch_open_event = True
                         release_start_time = None
                 else:
-                    # Pinch is tight again (or oscillating), cancel timer
                     release_start_time = None
 
             grip = 0.0 if pinch_state == "CLOSED" else 0.04
@@ -387,31 +461,30 @@ try:
         p.changeVisualShape(halo_body, -1, rgbaColor=halo_color)
         p.resetBasePositionAndOrientation(halo_body, cube_pos, [0, 0, 0, 1])
 
-        # ✅ grasp attempts = number of pinch-close events during the trial
+        # attempts
         if pinch_close_event:
             grasp_attempts += 1
 
-        # ✅ Attach on pinch CLOSE EVENT AND graspable
+        # attach
         if pinch_close_event and (not cube_attached) and graspable:
             cid = create_fixed_constraint_preserve_pose(robot, HAND_LINK, cube)
             cube_attached = True
             if time_to_grasp is None:
-                time_to_grasp = time.time() - trial_start  # first grasp time
+                time_to_grasp = time.time() - trial_start
 
-        # Release on pinch OPEN EVENT
+        # release
         if pinch_open_event and cube_attached:
-            # count a "drop" if released away from target (i.e., not a successful placement action)
             current_cube_pos = p.getBasePositionAndOrientation(cube)[0]
-            is_near_target = near_target(current_cube_pos, TARGET_POS, SUCCESS_THRESH)
-            if not is_near_target:
+            is_near = near_target(current_cube_pos, current_target_pos, SUCCESS_THRESH)
+            if not is_near:
                 drops += 1
 
             p.removeConstraint(cid)
             cube_attached = False
 
-            # If user released near target => we end the trial + log
-            if is_near_target:
-                err = float(np.linalg.norm(np.array(current_cube_pos) - TARGET_POS))
+            # end trial only if released near target
+            if is_near:
+                err = float(np.linalg.norm(np.array(current_cube_pos) - current_target_pos))
                 time_total = time.time() - trial_start
                 success = int(err < SUCCESS_THRESH)
 
@@ -419,44 +492,51 @@ try:
                     csv.writer(f).writerow([
                         PARTICIPANT_ID,
                         trial,
+                        current_factor,
+                        current_difficulty,
+                        round(current_D, 4),
                         round(time_total, 3),
                         round(time_to_grasp if time_to_grasp is not None else time_total, 3),
                         round(err, 4),
                         success,
                         grasp_attempts,
                         drops,
+                        round(current_cube_pos[0], 4), round(current_cube_pos[1], 4), round(current_cube_pos[2], 4),
+                        round(current_target_pos[0], 4), round(current_target_pos[1], 4), round(current_target_pos[2], 4),
                     ])
 
                 trial += 1
 
-                # reset for next trial (same environment)
-                p.resetBasePositionAndOrientation(cube, cube_start, [0, 0, 0, 1])
+                if trial < N_TRIALS:
+                    set_trial_condition(trial)
+
                 reset_trial_state()
 
         # ---------- HUD ----------
-        cv2.putText(frame, f"TRIAL: {trial+1}/{N_TRIALS} | ACTIVE: {active_region}",
-                    (10, h - 70), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+        cv2.putText(frame, f"TRIAL: {trial+1}/{N_TRIALS} | factor={current_factor} | diff={current_difficulty} | D={current_D:.2f}",
+                    (10, h - 90), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,255,0), 2)
+
+        cv2.putText(frame, f"ACTIVE: {active_region}",
+                    (10, h - 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,255,0), 2)
 
         if pinch_val is not None:
-            # Show Timer if releasing
             state_text = f"STATE: {pinch_state}"
             if release_start_time is not None:
                 countdown = RELEASE_DELAY - (time.time() - release_start_time)
                 state_text += f" (DROP IN {countdown:.1f}s)"
-                text_color = (0, 165, 255)  # Orange
+                text_color = (0, 165, 255)
             else:
-                text_color = (0, 255, 0)    # Green
+                text_color = (0, 255, 0)
 
             cv2.putText(frame, f"PINCH: {pinch_val:.3f} | {state_text}",
-                        (10, h - 40), cv2.FONT_HERSHEY_SIMPLEX, 0.7, text_color, 2)
+                        (10, h - 35), cv2.FONT_HERSHEY_SIMPLEX, 0.7, text_color, 2)
         else:
             cv2.putText(frame, "PINCH: --",
-                        (10, h - 40), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                        (10, h - 35), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,255,0), 2)
 
-        # show new counters live
         t2g_txt = "--" if time_to_grasp is None else f"{time_to_grasp:.2f}s"
         cv2.putText(frame, f"attempts={grasp_attempts} | drops={drops} | t_grasp={t2g_txt}",
-                    (10, h - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 255, 0), 2)
+                    (10, h - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0,255,0), 2)
 
         cv2.imshow("Unimanual Gesture Control – Velocity + Assisted Grasp", frame)
         if cv2.waitKey(1) & 0xFF == 27:
@@ -464,6 +544,7 @@ try:
 
         p.stepSimulation()
         time.sleep(1/240)
+
 finally:
     cap.release()
     cv2.destroyAllWindows()
