@@ -7,9 +7,9 @@ import mediapipe as mp
 import csv
 import os
 
-# =============================
+# ============================================================
 # PYBULLET SETUP
-# =============================
+# ============================================================
 p.connect(p.GUI)
 p.setAdditionalSearchPath(pybullet_data.getDataPath())
 p.resetSimulation()
@@ -29,9 +29,9 @@ p.resetDebugVisualizerCamera(
 
 p.loadURDF("plane.urdf")
 
-# =============================
+# ============================================================
 # LOAD PANDA
-# =============================
+# ============================================================
 robot = p.loadURDF("franka_panda/panda.urdf", [0, 0, 0], useFixedBase=True)
 
 joint_name_to_id = {}
@@ -54,6 +54,7 @@ WRIST_J    = joint_name_to_id["panda_joint6"]
 FINGER_L_J = joint_name_to_id["panda_finger_joint1"]
 FINGER_R_J = joint_name_to_id["panda_finger_joint2"]
 
+# Fingertip LINKS (better grasp point)
 LEFT_FINGER_LINK  = link_name_to_id.get("panda_leftfinger", None)
 RIGHT_FINGER_LINK = link_name_to_id.get("panda_rightfinger", None)
 
@@ -65,9 +66,9 @@ if LEFT_FINGER_LINK is None or RIGHT_FINGER_LINK is None:
 
 LOCKED_JOINTS = ["panda_joint3", "panda_joint5", "panda_joint7"]
 
-# =============================
+# ============================================================
 # NEUTRAL POSTURE
-# =============================
+# ============================================================
 neutral = {
     "panda_joint1": 0.0,
     "panda_joint2": -0.4,
@@ -80,9 +81,9 @@ neutral = {
 for j, v in neutral.items():
     p.resetJointState(robot, joint_name_to_id[j], v)
 
-# =============================
-# TABLES (Layout B)
-# =============================
+# ============================================================
+# TABLES (Layout B)  (UNCHANGED)
+# ============================================================
 def create_table(x, y, top_z):
     half = [0.22, 0.22, 0.05]
     col = p.createCollisionShape(p.GEOM_BOX, halfExtents=half)
@@ -99,9 +100,9 @@ TABLE_Z = 0.26
 create_table(TABLE_X, PICK_Y, TABLE_Z)
 create_table(TABLE_X, PLACE_Y, TABLE_Z)
 
-# =============================
-# CUBE + TARGET
-# =============================
+# ============================================================
+# CUBE + TARGET (UNCHANGED)
+# ============================================================
 CUBE_SIZE = 0.05
 
 cube_start = [TABLE_X, PICK_Y + 0.03, TABLE_Z + CUBE_SIZE / 2]
@@ -114,17 +115,26 @@ target_vis = p.createVisualShape(
 )
 p.createMultiBody(0, baseVisualShapeIndex=target_vis, basePosition=TARGET_POS)
 
-# =============================
-# MEDIAPIPE
-# =============================
+# ============================================================
+# MEDIAPIPE (BIMANUAL)
+# ============================================================
 mp_hands = mp.solutions.hands
 mp_draw = mp.solutions.drawing_utils
-hands = mp_hands.Hands(max_num_hands=1)
-cap = cv2.VideoCapture(0)
 
-# =============================
+hands = mp_hands.Hands(
+    static_image_mode=False,
+    max_num_hands=2,
+    min_detection_confidence=0.6,
+    min_tracking_confidence=0.6
+)
+
+cap = cv2.VideoCapture(0)
+if not cap.isOpened():
+    raise RuntimeError("Could not open webcam")
+
+# ============================================================
 # VELOCITY CONTROL PARAMETERS
-# =============================
+# ============================================================
 JOINT_VEL = {
     "BASE":     1.4,
     "SHOULDER": 1.2,
@@ -132,19 +142,20 @@ JOINT_VEL = {
     "ELBOW":    1.3,
 }
 
-# ✅ bigger deadzone
+# Bigger deadzone (transparent band)
 DEADZONE_TOP = 0.42
 DEADZONE_BOTTOM = 0.58
 
+# Pinch thresholds
 PINCH_CLOSE = 0.04
 PINCH_OPEN  = 0.07
 
 ARM_FORCE = 90
 GRIP_FORCE = 100
 
-# =============================
+# ============================================================
 # ASSISTED GRASP
-# =============================
+# ============================================================
 GRASP_XY_THRESH = 0.065
 GRASP_Z_THRESH  = 0.055
 
@@ -160,11 +171,11 @@ halo_body = p.createMultiBody(
     basePosition=cube_start
 )
 
-# =============================
+# ============================================================
 # EXPERIMENT LOGGING
-# =============================
+# ============================================================
 PARTICIPANT_ID = "P01"
-LOG_FILE = f"results_{PARTICIPANT_ID}_unimanual.csv"
+LOG_FILE = f"results_{PARTICIPANT_ID}_bimanual.csv"
 SUCCESS_THRESH = 0.05
 
 if not os.path.exists(LOG_FILE):
@@ -186,8 +197,7 @@ def get_grasp_point():
 
 def create_fixed_constraint_preserve_pose(parent_body, parent_link, child_body):
     """
-    Create a fixed constraint that preserves the current relative pose between parent link and child body.
-    This prevents the cube snapping into the wrist.
+    Fixed constraint preserving current relative pose (prevents cube snapping into wrist).
     """
     ee_pos, ee_orn = p.getLinkState(parent_body, parent_link)[:2]
     cube_pos, cube_orn = p.getBasePositionAndOrientation(child_body)
@@ -208,18 +218,41 @@ def create_fixed_constraint_preserve_pose(parent_body, parent_link, child_body):
         childFrameOrientation=[0, 0, 0, 1],
     )
 
-# pinch edge-trigger
-pinch_state = "OPEN"  # OPEN or CLOSED
-release_start_time = None  # Tracks when the release "began"
-RELEASE_DELAY = 0.6  # Seconds to wait before actually releasing
+# ============================================================
+# BIMANUAL RULE
+# Left hand controls LEFT TWO regions: BASE + SHOULDER
+# Right hand controls RIGHT TWO regions: WRIST + ELBOW
+# (Same 4 splits on screen for fair comparison)
+# ============================================================
+# Global pinch state (either hand can pinch to close/open)
+pinch_state = "OPEN"      # OPEN / CLOSED
+release_start_time = None
+RELEASE_DELAY = 0.6       # seconds before opening actually releases (robustness)
 
-# =============================
+def hand_center(lms):
+    xs = [pt.x for pt in lms]
+    ys = [pt.y for pt in lms]
+    return float(np.mean(xs)), float(np.mean(ys))
+
+def pinch_value(lms):
+    thumb = lms[mp_hands.HandLandmark.THUMB_TIP]
+    index = lms[mp_hands.HandLandmark.INDEX_FINGER_TIP]
+    return float(np.linalg.norm(np.array([thumb.x, thumb.y]) - np.array([index.x, index.y])))
+
+def region_from_cx(cx):
+    # Same 4 splits
+    if cx < 0.25:  return "BASE"
+    if cx < 0.50:  return "SHOULDER"
+    if cx < 0.75:  return "WRIST"
+    return "ELBOW"
+
+# ============================================================
 # MAIN LOOP
-# =============================
+# ============================================================
 try:
     while True:
         if not p.isConnected():
-            print("[ERROR] PyBullet disconnected (GUI closed or crashed). Exiting cleanly.")
+            print("[ERROR] PyBullet disconnected (GUI closed/crashed). Exiting cleanly.")
             break
 
         ret, frame = cap.read()
@@ -229,95 +262,126 @@ try:
         frame = cv2.flip(frame, 1)
         h, w, _ = frame.shape
 
-        # ---------- UI: regions ----------
-        splits = [0.25, 0.50, 0.75]
-        labels = ["BASE", "SHOULDER", "WRIST", "ELBOW"]
-        for s in splits:
-            cv2.line(frame, (int(w*s), 0), (int(w*s), h), (255,255,255), 2)
-        for i, l in enumerate(labels):
-            cv2.putText(frame, l,
-                        (int(w*(i*0.25+0.125))-45, 30),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255,255,255), 2)
+        # ---------- UI: 4 regions ----------
+        r1, r2, r3 = int(w * 0.25), int(w * 0.50), int(w * 0.75)
+        cv2.line(frame, (r1, 0), (r1, h), (255, 255, 255), 2)
+        cv2.line(frame, (r2, 0), (r2, h), (255, 255, 255), 2)
+        cv2.line(frame, (r3, 0), (r3, h), (255, 255, 255), 2)
 
-        # ---------- UI: deadzone (TRANSPARENT) ----------
+        labels = ["BASE", "SHOULDER", "WRIST", "ELBOW"]
+        for i, label in enumerate(labels):
+            cv2.putText(frame, label,
+                        (int(w * (i * 0.25 + 0.125)) - 45, 30),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6,
+                        (255, 255, 255), 2)
+
+        # ---------- UI: deadzone (transparent) ----------
         top_y = int(h * DEADZONE_TOP)
         bot_y = int(h * DEADZONE_BOTTOM)
 
         overlay = frame.copy()
-        cv2.rectangle(overlay, (0, top_y), (w, bot_y), (60,60,60), -1)
+        cv2.rectangle(overlay, (0, top_y), (w, bot_y), (60, 60, 60), -1)
         frame = cv2.addWeighted(overlay, 0.22, frame, 0.78, 0)
-        cv2.line(frame, (0, top_y), (w, top_y), (0,255,0), 2)
-        cv2.line(frame, (0, bot_y), (w, bot_y), (0,255,0), 2)
+        cv2.line(frame, (0, top_y), (w, top_y), (0, 255, 0), 2)
+        cv2.line(frame, (0, bot_y), (w, bot_y), (0, 255, 0), 2)
 
-        # ---------- Default velocities ----------
+        # ---------- Default velocities = 0 ----------
         joint_vel = {BASE_J: 0.0, SHOULDER_J: 0.0, WRIST_J: 0.0, ELBOW_J: 0.0}
 
-        # ---------- Hand tracking ----------
-        res = hands.process(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
-        active_region = "NONE"
-        grip = 0.04
-        pinch_val = None
+        # ---------- MediaPipe processing ----------
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        results = hands.process(rgb)
+
+        active_left = "NONE"
+        active_right = "NONE"
+        pinch_val_best = None
 
         pinch_close_event = False
         pinch_open_event = False
 
-        if res.multi_hand_landmarks:
-            mp_draw.draw_landmarks(frame, res.multi_hand_landmarks[0], mp_hands.HAND_CONNECTIONS)
+        # Collect pinch candidates from whichever hands are present
+        pinch_candidates = []
 
-            lm = res.multi_hand_landmarks[0].landmark
-            cx = np.mean([pt.x for pt in lm])
-            cy = np.mean([pt.y for pt in lm])
+        if results.multi_hand_landmarks and results.multi_handedness:
+            for i, (hand_lm, handedness) in enumerate(zip(results.multi_hand_landmarks, results.multi_handedness)):
+                mp_draw.draw_landmarks(frame, hand_lm, mp_hands.HAND_CONNECTIONS)
 
-            # Region selection
-            if cx < 0.25:
-                active_region = "BASE";     jid = BASE_J
-            elif cx < 0.50:
-                active_region = "SHOULDER"; jid = SHOULDER_J
-            elif cx < 0.75:
-                active_region = "WRIST";    jid = WRIST_J
-            else:
-                active_region = "ELBOW";    jid = ELBOW_J
+                label = handedness.classification[0].label  # "Left" or "Right"
+                lms = hand_lm.landmark
 
-            # Direction
-            if cy < DEADZONE_TOP:
-                joint_vel[jid] = +JOINT_VEL[active_region]
-            elif cy > DEADZONE_BOTTOM:
-                joint_vel[jid] = -JOINT_VEL[active_region]
+                cx, cy = hand_center(lms)
+                px, py = int(cx * w), int(cy * h)
+                cv2.circle(frame, (px, py), 6, (0, 255, 0), -1)
 
-            # Pinch value
-            thumb = lm[mp_hands.HandLandmark.THUMB_TIP]
-            index = lm[mp_hands.HandLandmark.INDEX_FINGER_TIP]
-            pinch_val = float(np.linalg.norm(
-                np.array([thumb.x, thumb.y]) - np.array([index.x, index.y])
-            ))
+                region = region_from_cx(cx)
 
-            # ----------------------------------------------------
-            #  DELAYED RELEASE LOGIC
-            # ----------------------------------------------------
-            
-            # 1. Detect CLOSE (Immediate)
-            if pinch_state == "OPEN" and pinch_val < PINCH_CLOSE:
+                # Show per-hand debug
+                cv2.putText(frame, f"{label}: {region}",
+                            (px - 55, py - 15),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.55,
+                            (0, 255, 0), 2)
+
+                # Determine direction based on deadzone
+                direction = 0
+                if cy < DEADZONE_TOP:
+                    direction = +1
+                elif cy > DEADZONE_BOTTOM:
+                    direction = -1
+
+                # Enforce your bimanual mapping:
+                #   Left hand -> BASE + SHOULDER only
+                #   Right hand -> WRIST + ELBOW only
+                if label == "Left":
+                    if region == "BASE":
+                        joint_vel[BASE_J] = direction * JOINT_VEL["BASE"]
+                        active_left = "BASE"
+                    elif region == "SHOULDER":
+                        joint_vel[SHOULDER_J] = direction * JOINT_VEL["SHOULDER"]
+                        active_left = "SHOULDER"
+                    else:
+                        # Left hand in right regions does nothing (by design)
+                        pass
+
+                elif label == "Right":
+                    if region == "WRIST":
+                        joint_vel[WRIST_J] = direction * JOINT_VEL["WRIST"]
+                        active_right = "WRIST"
+                    elif region == "ELBOW":
+                        joint_vel[ELBOW_J] = direction * JOINT_VEL["ELBOW"]
+                        active_right = "ELBOW"
+                    else:
+                        # Right hand in left regions does nothing (by design)
+                        pass
+
+                # Pinch candidates (either hand can operate gripper)
+                pv = pinch_value(lms)
+                pinch_candidates.append(pv)
+
+        # Decide pinch value to use (closest pinch = min distance)
+        if pinch_candidates:
+            pinch_val_best = float(min(pinch_candidates))
+
+            # ---- DELAYED RELEASE LOGIC (robust) ----
+            # Close immediately when below PINCH_CLOSE
+            if pinch_state == "OPEN" and pinch_val_best < PINCH_CLOSE:
                 pinch_state = "CLOSED"
                 pinch_close_event = True
-                release_start_time = None  # Reset timer immediately if we close
+                release_start_time = None
 
-            # 2. Detect OPEN (Delayed)
+            # Open only if above PINCH_OPEN consistently for RELEASE_DELAY
             elif pinch_state == "CLOSED":
-                if pinch_val > PINCH_OPEN:
-                    # Pinch is open, start timer if not already started
+                if pinch_val_best > PINCH_OPEN:
                     if release_start_time is None:
                         release_start_time = time.time()
-                    
-                    # Check if timer exceeded
                     elif (time.time() - release_start_time) > RELEASE_DELAY:
                         pinch_state = "OPEN"
                         pinch_open_event = True
                         release_start_time = None
                 else:
-                    # Pinch is tight again (or oscillating), cancel timer
                     release_start_time = None
 
-            grip = 0.0 if pinch_state == "CLOSED" else 0.04
+        # Convert pinch_state -> gripper target position
+        grip = 0.0 if pinch_state == "CLOSED" else 0.04
 
         # ---------- Apply VELOCITY control ----------
         p.setJointMotorControl2(robot, BASE_J, p.VELOCITY_CONTROL,
@@ -332,6 +396,7 @@ try:
         p.setJointMotorControl2(robot, FINGER_L_J, p.POSITION_CONTROL, grip, force=GRIP_FORCE)
         p.setJointMotorControl2(robot, FINGER_R_J, p.POSITION_CONTROL, grip, force=GRIP_FORCE)
 
+        # Lock other joints to neutral
         for jn in LOCKED_JOINTS:
             jid = joint_name_to_id[jn]
             p.setJointMotorControl2(robot, jid, p.POSITION_CONTROL, neutral[jn], force=ARM_FORCE)
@@ -350,12 +415,12 @@ try:
         p.changeVisualShape(halo_body, -1, rgbaColor=halo_color)
         p.resetBasePositionAndOrientation(halo_body, cube_pos, [0, 0, 0, 1])
 
-        # ✅ Attach on pinch CLOSE EVENT AND graspable
+        # Attach on pinch CLOSE event (either hand) + graspable
         if pinch_close_event and (not cube_attached) and graspable:
             cid = create_fixed_constraint_preserve_pose(robot, HAND_LINK, cube)
             cube_attached = True
 
-        # Release on pinch OPEN EVENT
+        # Release on pinch OPEN event
         if pinch_open_event and cube_attached:
             p.removeConstraint(cid)
             cube_attached = False
@@ -372,32 +437,31 @@ try:
             p.resetBasePositionAndOrientation(cube, cube_start, [0, 0, 0, 1])
 
         # ---------- HUD ----------
-        cv2.putText(frame, f"ACTIVE: {active_region}", (10, h - 45),
+        hud1 = f"LEFT: {active_left} | RIGHT: {active_right}"
+        cv2.putText(frame, hud1, (10, h - 60),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
 
-        if pinch_val is not None:
-            # Show Timer if releasing
-            state_text = f"STATE: {pinch_state}"
+        if pinch_val_best is not None:
+            state_text = f"PINCH(min): {pinch_val_best:.3f} | STATE: {pinch_state}"
             if release_start_time is not None:
                 countdown = RELEASE_DELAY - (time.time() - release_start_time)
                 state_text += f" (DROP IN {countdown:.1f}s)"
-                # Draw warning color
-                text_color = (0, 165, 255) # Orange
+                color = (0, 165, 255)
             else:
-                text_color = (0, 255, 0)   # Green
-
-            cv2.putText(frame, f"PINCH: {pinch_val:.3f} | {state_text}",
-                        (10, h - 15), cv2.FONT_HERSHEY_SIMPLEX, 0.7, text_color, 2)
+                color = (0, 255, 0)
+            cv2.putText(frame, state_text, (10, h - 25),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
         else:
-            cv2.putText(frame, "PINCH: --",
-                        (10, h - 15), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+            cv2.putText(frame, "PINCH: --", (10, h - 25),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
 
-        cv2.imshow("Unimanual Gesture Control – Velocity + Assisted Grasp", frame)
+        cv2.imshow("Bimanual Gesture Control – Velocity + Assisted Grasp", frame)
         if cv2.waitKey(1) & 0xFF == 27:
             break
 
         p.stepSimulation()
-        time.sleep(1/240)
+        time.sleep(1 / 240)
+
 finally:
     cap.release()
     cv2.destroyAllWindows()
