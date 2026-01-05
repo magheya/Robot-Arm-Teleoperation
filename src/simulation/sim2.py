@@ -172,53 +172,20 @@ halo_body = p.createMultiBody(
 )
 
 # ============================================================
-# EXPERIMENT LOGGING (UPDATED)
+# EXPERIMENT LOGGING
 # ============================================================
 PARTICIPANT_ID = "P01"
 LOG_FILE = f"results_{PARTICIPANT_ID}_bimanual.csv"
 SUCCESS_THRESH = 0.05
 
-N_TRIALS = 5  # ✅ run exactly 5 successful trials then stop
-
-# New metrics:
-# - time_to_grasp: time from trial start to first attachment
-# - grasp_attempts: number of pinch-close events (attempts) during trial
-# - drops: number of times cube was released while not at target (unintended drops)
-
 if not os.path.exists(LOG_FILE):
     with open(LOG_FILE, "w", newline="") as f:
-        csv.writer(f).writerow([
-            "participant",
-            "trial",
-            "time_total",
-            "time_to_grasp",
-            "placement_error",
-            "success",
-            "grasp_attempts",
-            "drops",
-        ])
+        csv.writer(f).writerow(["participant", "trial", "time", "placement_error", "success"])
 
 trial = 0
 trial_start = time.time()
 cube_attached = False
 cid = None
-
-# ✅ per-trial counters/state
-grasp_attempts = 0
-drops = 0
-time_to_grasp = None  # set when first attached
-
-def reset_trial_state():
-    global trial_start, cube_attached, cid, grasp_attempts, drops, time_to_grasp
-    trial_start = time.time()
-    cube_attached = False
-    cid = None
-    grasp_attempts = 0
-    drops = 0
-    time_to_grasp = None
-
-def near_target(pos, target, thresh):
-    return float(np.linalg.norm(np.array(pos) - np.array(target))) < float(thresh)
 
 def get_grasp_point():
     """Midpoint of fingertip LINKS (best). If not available, fallback to hand link position."""
@@ -284,10 +251,6 @@ def region_from_cx(cx):
 # ============================================================
 try:
     while True:
-        if trial >= N_TRIALS:
-            print(f"[DONE] Completed {N_TRIALS} trials.")
-            break
-
         if not p.isConnected():
             print("[ERROR] PyBullet disconnected (GUI closed/crashed). Exiting cleanly.")
             break
@@ -375,6 +338,9 @@ try:
                     elif region == "SHOULDER":
                         joint_vel[SHOULDER_J] = direction * JOINT_VEL["SHOULDER"]
                         active_left = "SHOULDER"
+                    else:
+                        # Left hand in right regions does nothing (by design)
+                        pass
 
                 elif label == "Right":
                     if region == "WRIST":
@@ -383,6 +349,9 @@ try:
                     elif region == "ELBOW":
                         joint_vel[ELBOW_J] = direction * JOINT_VEL["ELBOW"]
                         active_right = "ELBOW"
+                    else:
+                        # Right hand in left regions does nothing (by design)
+                        pass
 
                 # Pinch candidates (either hand can operate gripper)
                 pv = pinch_value(lms)
@@ -446,62 +415,31 @@ try:
         p.changeVisualShape(halo_body, -1, rgbaColor=halo_color)
         p.resetBasePositionAndOrientation(halo_body, cube_pos, [0, 0, 0, 1])
 
-        # ✅ attempts counter (per trial)
-        if pinch_close_event:
-            grasp_attempts += 1
-
         # Attach on pinch CLOSE event (either hand) + graspable
         if pinch_close_event and (not cube_attached) and graspable:
             cid = create_fixed_constraint_preserve_pose(robot, HAND_LINK, cube)
             cube_attached = True
-            if time_to_grasp is None:
-                time_to_grasp = time.time() - trial_start
 
         # Release on pinch OPEN event
         if pinch_open_event and cube_attached:
-            current_cube_pos = p.getBasePositionAndOrientation(cube)[0]
-            is_near_target = near_target(current_cube_pos, TARGET_POS, SUCCESS_THRESH)
-
-            # count unintended drop if released away from target
-            if not is_near_target:
-                drops += 1
-
             p.removeConstraint(cid)
             cube_attached = False
 
-            # ✅ End trial ONLY if released near target
-            if is_near_target:
-                err = float(np.linalg.norm(np.array(current_cube_pos) - TARGET_POS))
-                time_total = time.time() - trial_start
-                success = int(err < SUCCESS_THRESH)
+            err = np.linalg.norm(np.array(p.getBasePositionAndOrientation(cube)[0]) - TARGET_POS)
+            duration = time.time() - trial_start
 
-                with open(LOG_FILE, "a", newline="") as f:
-                    csv.writer(f).writerow([
-                        PARTICIPANT_ID,
-                        trial,
-                        round(time_total, 3),
-                        round(time_to_grasp if time_to_grasp is not None else time_total, 3),
-                        round(err, 4),
-                        success,
-                        grasp_attempts,
-                        drops,
-                    ])
+            with open(LOG_FILE, "a", newline="") as f:
+                csv.writer(f).writerow([PARTICIPANT_ID, trial, round(duration, 3),
+                                        round(err, 4), int(err < SUCCESS_THRESH)])
 
-                trial += 1
-
-                # reset cube + reset per-trial state
-                p.resetBasePositionAndOrientation(cube, cube_start, [0, 0, 0, 1])
-                reset_trial_state()
+            trial += 1
+            trial_start = time.time()
+            p.resetBasePositionAndOrientation(cube, cube_start, [0, 0, 0, 1])
 
         # ---------- HUD ----------
-        hud1 = f"TRIAL: {trial+1}/{N_TRIALS} | LEFT: {active_left} | RIGHT: {active_right}"
-        cv2.putText(frame, hud1, (10, h - 80),
+        hud1 = f"LEFT: {active_left} | RIGHT: {active_right}"
+        cv2.putText(frame, hud1, (10, h - 60),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-
-        # show new counters live
-        t2g_txt = "--" if time_to_grasp is None else f"{time_to_grasp:.2f}s"
-        cv2.putText(frame, f"attempts={grasp_attempts} | drops={drops} | t_grasp={t2g_txt}",
-                    (10, h - 50), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 255, 0), 2)
 
         if pinch_val_best is not None:
             state_text = f"PINCH(min): {pinch_val_best:.3f} | STATE: {pinch_state}"
@@ -511,10 +449,10 @@ try:
                 color = (0, 165, 255)
             else:
                 color = (0, 255, 0)
-            cv2.putText(frame, state_text, (10, h - 20),
+            cv2.putText(frame, state_text, (10, h - 25),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
         else:
-            cv2.putText(frame, "PINCH: --", (10, h - 20),
+            cv2.putText(frame, "PINCH: --", (10, h - 25),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
 
         cv2.imshow("Bimanual Gesture Control – Velocity + Assisted Grasp", frame)
