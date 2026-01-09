@@ -455,6 +455,16 @@ def run_unimanual(participant_id: str, trial_plan: list[dict], block_num: int):
         p.resetBasePositionAndOrientation(target_body, current_target_pos.tolist(), [0, 0, 0, 1])
         p.resetBasePositionAndOrientation(halo_body, current_cube_pos.tolist(), [0, 0, 0, 1])
 
+        # --- NEW CODE START: Reset Robot to Start Position ---
+        for j_name, j_val in W["neutral"].items():
+            j_id = W["joint_name_to_id"][j_name]
+            p.resetJointState(robot, j_id, j_val, targetVelocity=0)
+            
+        # Optional: Reset the shared velocity command to 0 so it doesn't jerk immediately
+        with shared.lock:
+            shared.joint_vels = {"BASE": 0.0, "SHOULDER": 0.0, "WRIST": 0.0, "ELBOW": 0.0}
+        # --- NEW CODE END ---
+
         current_D = float(np.linalg.norm(current_cube_pos - current_target_pos))
 
         trial_start = time.time()
@@ -930,6 +940,17 @@ def run_bimanual(participant_id: str, trial_plan: list[dict], block_num: int):
         p.resetBasePositionAndOrientation(cube, current_cube_pos.tolist(), [0, 0, 0, 1])
         p.resetBasePositionAndOrientation(target_body, current_target_pos.tolist(), [0, 0, 0, 1])
         p.resetBasePositionAndOrientation(halo_body, current_cube_pos.tolist(), [0, 0, 0, 1])
+
+        # --- NEW CODE START: Reset Robot to Start Position ---
+        for j_name, j_val in W["neutral"].items():
+            j_id = W["joint_name_to_id"][j_name]
+            p.resetJointState(robot, j_id, j_val, targetVelocity=0)
+            
+        # Optional: Reset the shared velocity command to 0
+        with shared.lock:
+            shared.vel_cmd = {"BASE": 0.0, "SHOULDER": 0.0, "WRIST": 0.0, "ELBOW": 0.0}
+        # --- NEW CODE END ---
+        
         current_D = float(np.linalg.norm(current_cube_pos - current_target_pos))
 
         # reset per-trial (match unimanual behavior)
