@@ -287,8 +287,7 @@ class SharedState:
         self.release_countdown = None
         self.lock = threading.Lock()
 
-def run_unimanual(participant_id: str, trial_plan: list[dict]):
-    # match your unimanual thresholds
+def run_unimanual(participant_id: str, trial_plan: list[dict], block_num: int):    
     DEADZONE_TOP = 0.42
     DEADZONE_BOTTOM = 0.58
     JOINT_SPEED = 2.0
@@ -416,7 +415,7 @@ def run_unimanual(participant_id: str, trial_plan: list[dict]):
     # persistent CSV logging
     LOG_FILE = "results_unimanual_all.csv"
     HEADER = [
-        "participant", "run_id", "trial", "difficulty", "D",
+        "participant", "run_id", "block_num", "trial", "difficulty", "D",
         "time_total", "time_to_grasp", "placement_error",
         "success", "outcome", "drops",
         "cube_x", "cube_y", "cube_z",
@@ -482,7 +481,7 @@ def run_unimanual(participant_id: str, trial_plan: list[dict]):
 
         with open(LOG_FILE, "a", newline="") as f:
             csv.writer(f).writerow([
-                participant_id, RUN_ID, trial_idx, current_difficulty, round(current_D, 4),
+                participant_id, RUN_ID, block_num, trial_idx, current_difficulty, round(current_D, 4),
                 round(time_total, 3),
                 round(time_to_grasp if time_to_grasp is not None else time_total, 3),
                 (round(float(placement_error), 4) if placement_error == placement_error else np.nan),
@@ -841,8 +840,7 @@ def bimanual_vision_worker(shared: BimanualSharedState,
 
     cap.release()
 
-def run_bimanual(participant_id: str, trial_plan: list[dict]):
-    # MATCH unimanual success/fail logic thresholds
+def run_bimanual(participant_id: str, trial_plan: list[dict], block_num: int):  
     SUCCESS_THRESH = 0.065
     FLOOR_Z_THRESH = 0.06
     GRASP_XY_THRESH = 0.065
@@ -892,7 +890,7 @@ def run_bimanual(participant_id: str, trial_plan: list[dict]):
     # logging (same columns)
     LOG_FILE = "results_bimanual_all.csv"
     HEADER = [
-        "participant", "run_id", "trial", "difficulty", "D",
+        "participant", "run_id", "block_num", "trial", "difficulty", "D",
         "time_total", "time_to_grasp", "placement_error",
         "success", "outcome", "drops",
         "cube_x", "cube_y", "cube_z",
@@ -955,7 +953,7 @@ def run_bimanual(participant_id: str, trial_plan: list[dict]):
 
         with open(LOG_FILE, "a", newline="") as f:
             csv.writer(f).writerow([
-                participant_id, RUN_ID, trial, current_difficulty, round(current_D, 4),
+                participant_id, RUN_ID, block_num, trial, current_difficulty, round(current_D, 4),
                 round(time_total, 3),
                 round(time_to_grasp if time_to_grasp is not None else time_total, 3),
                 (round(float(placement_error), 4) if placement_error == placement_error else np.nan),
@@ -1151,7 +1149,7 @@ if __name__ == "__main__":
     for idx, (func, name) in enumerate(EXPERIMENT_ORDER):
         print(f"\n>>> [{idx+1}/2] Starting {name}...")
         
-        finished = func(PARTICIPANT_ID, TRIAL_PLAN)
+        finished = func(PARTICIPANT_ID, TRIAL_PLAN, block_num=(idx + 1))
         
         if not finished:
             print(f"[STOP] {name} ended early. Stopping session.")
