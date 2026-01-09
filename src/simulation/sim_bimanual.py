@@ -405,6 +405,10 @@ try:
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         results = hands.process(rgb)
 
+        cv2.putText(frame, f"hands_detected={0 if not results.multi_hand_landmarks else len(results.multi_hand_landmarks)}",
+            (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,255,255), 2)
+
+
         active_left = "NONE"
         active_right = "NONE"
         pinch_val_best = None

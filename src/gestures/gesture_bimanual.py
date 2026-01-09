@@ -56,14 +56,17 @@ def region_from_cx(cx: float) -> str:
     else:
         return "ELBOW"
 
+# def allowed(handedness: str, region: str) -> bool:
+#     # Left hand allowed only in left-half regions
+#     if handedness == "Left":
+#         return region in ["BASE", "SHOULDER"]
+#     # Right hand allowed only in right-half regions
+#     if handedness == "Right":
+#         return region in ["WRIST", "ELBOW"]
+#     return False
+
 def allowed(handedness: str, region: str) -> bool:
-    # Left hand allowed only in left-half regions
-    if handedness == "Left":
-        return region in ["BASE", "SHOULDER"]
-    # Right hand allowed only in right-half regions
-    if handedness == "Right":
-        return region in ["WRIST", "ELBOW"]
-    return False
+    return True
 
 while True:
     ret, frame = cap.read()
