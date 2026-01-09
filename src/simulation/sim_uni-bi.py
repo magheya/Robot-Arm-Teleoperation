@@ -41,45 +41,11 @@ def next_run_id(csv_path: str, participant_id: str) -> int:
     except:
         return 1
 
-def get_next_participant_number(filename="participant_counter.txt") -> int:
-    """Reads the next P# from a file so it remembers across restarts."""
-    num = 0
-    if os.path.exists(filename):
-        try:
-            with open(filename, "r") as f:
-                val = f.read().strip()
-                if val.isdigit():
-                    num = int(val)
-        except:
-            pass
-            
-    # Save the NEXT number immediately
-    with open(filename, "w") as f:
-        f.write(str(num + 1))
-    return num
-
-def generate_participant_id(p_num: int) -> tuple[str, str, list]:
-    """
-    Generates ID based on number (P01, P02...) and determines Order.
-    Returns: (participant_id, group_name, experiment_list)
-    """
-    # Even numbers = Group A (Unimanual first)
-    # Odd numbers  = Group B (Bimanual first)
-    if p_num % 2 == 0:
-        group_label = "A"
-        # Order: Unimanual -> Bimanual
-        order = [(run_unimanual, "UNIMANUAL"), (run_bimanual, "BIMANUAL")]
-    else:
-        group_label = "B"
-        # Order: Bimanual -> Unimanual
-        order = [(run_bimanual, "BIMANUAL"), (run_unimanual, "UNIMANUAL")]
-
-    # Create clean ID: "P05_GroupB_20231027"
-    # :02d ensures "P01" instead of "P1" (better for file sorting)
-    date_str = time.strftime("%Y%m%d") 
-    p_id = f"P{p_num:02d}_Group{group_label}_{date_str}"
-    
-    return p_id, group_label, order
+def make_unique_participant_id(prefix="EXP") -> str:
+    # unique each script run
+    ts = time.strftime("%Y%m%d_%H%M%S")
+    rnd = uuid.uuid4().hex[:6].upper()
+    return f"{prefix}_{ts}_{rnd}"
 
 # ============================================================
 # SHARED HELPERS
@@ -1128,36 +1094,31 @@ def run_bimanual(participant_id: str, trial_plan: list[dict]):
         if p.isConnected():
             p.disconnect()
 
+# ============================================================
+# RUN BOTH SEQUENTIALLY
+# ============================================================
 if __name__ == "__main__":
-    # 1. Get next number automatically
-    p_num = get_next_participant_number()
-    
-    # 2. Generate ID and get the correct Order automatically
-    PARTICIPANT_ID, GROUP, EXPERIMENT_ORDER = generate_participant_id(p_num)
+    PARTICIPANT_ID = make_unique_participant_id(prefix="EXP")
 
-    # 3. Setup Trial Plan (shuffled difficulties)
+    # RNG seed: unique each session, but deterministic within that session
+    # (so unimanual + bimanual share the same shuffled order)
     seed = int(uuid.uuid4().hex[:8], 16)
     rng = random.Random(seed)
+
     TRIAL_PLAN = make_trial_plan_shuffled(rng, reps=2, levels=("easy", "medium", "hard"))
 
-    print("="*60)
-    print(f"SESSION DETAILS")
-    print(f"Participant: {PARTICIPANT_ID}")
-    print(f"Group:       {GROUP}")
-    print(f"Order:       {EXPERIMENT_ORDER[0][1]} -> {EXPERIMENT_ORDER[1][1]}")
-    print("="*60)
+    print(f"[SESSION] participant_id = {PARTICIPANT_ID}")
+    print(f"[SESSION] trial_order = {[t['difficulty'] for t in TRIAL_PLAN]}")
 
-    # 4. Run the experiments in the assigned order
-    for idx, (func, name) in enumerate(EXPERIMENT_ORDER):
-        print(f"\n>>> [{idx+1}/2] Starting {name}...")
-        
-        finished = func(PARTICIPANT_ID, TRIAL_PLAN)
-        
-        if not finished:
-            print(f"[STOP] {name} ended early. Stopping session.")
-            break
-        
-        print(f">>> {name} Finished.")
-        time.sleep(1.0) # brief pause for physics cleanup
+    print("[1/2] Starting UNIMANUAL experiment...")
+    finished_unimanual = run_unimanual(PARTICIPANT_ID, TRIAL_PLAN)
 
-    print("\n[DONE] Session Complete.")
+    if not finished_unimanual:
+        print("[STOP] Unimanual ended early (ESC or stop). Not starting bimanual.")
+    else:
+        print("[2/2] Unimanual complete. Starting BIMANUAL experiment...")
+        finished_bimanual = run_bimanual(PARTICIPANT_ID, TRIAL_PLAN)
+        if not finished_bimanual:
+            print("[STOP] Bimanual ended early (ESC).")
+
+    print("[DONE] All experiments finished.")
