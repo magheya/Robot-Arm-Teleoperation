@@ -870,6 +870,8 @@ def run_bimanual(participant_id: str, trial_plan: list[dict], block_num: int):
     RELEASE_DELAY = 0.6
     HOLD_SECONDS = 0.12
 
+    shared = SharedState()
+
     # --- setup world ---
     W = setup_world()
     robot = W["robot"]
