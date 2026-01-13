@@ -16,7 +16,7 @@ p.resetSimulation()
 p.setGravity(0, 0, -9.81)
 
 p.setPhysicsEngineParameter(
-    fixedTimeStep=1.0 / 240.0,
+    fixedTimeStep=1.0 / 200.0,
     numSolverIterations=200,
 )
 
@@ -129,10 +129,10 @@ cap = cv2.VideoCapture(0)
 # VELOCITY CONTROL PARAMETERS
 # =============================
 JOINT_VEL = {
-    "BASE":     1.4,
-    "SHOULDER": 1.2,
-    "WRIST":    1.5,
-    "ELBOW":    1.3,
+    "BASE":     0.8,
+    "SHOULDER": 0.7,
+    "WRIST":    0.9,
+    "ELBOW":    0.8,
 }
 
 # ✅ bigger deadzone
@@ -543,7 +543,7 @@ try:
             break
 
         p.stepSimulation()
-        time.sleep(1/240)
+        time.sleep(1/200)
 
 finally:
     cap.release()

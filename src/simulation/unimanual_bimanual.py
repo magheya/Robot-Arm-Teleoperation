@@ -158,7 +158,7 @@ def setup_world():
     p.setAdditionalSearchPath(pybullet_data.getDataPath())
     p.resetSimulation()
     p.setGravity(0, 0, -9.81)
-    p.setPhysicsEngineParameter(fixedTimeStep=1.0 / 240.0, numSolverIterations=50)
+    p.setPhysicsEngineParameter(fixedTimeStep=1.0 / 200.0, numSolverIterations=50)
 
     p.resetDebugVisualizerCamera(
         cameraDistance=1.4, cameraYaw=90, cameraPitch=-25,
@@ -616,6 +616,7 @@ def run_unimanual(participant_id: str, trial_plan: list[dict], block_num: int):
                         log_and_advance("missed_target", dist_2d, current_cube_pos_live)
 
             p.stepSimulation()
+            time.sleep(1.0 / 80.0)
 
             # vision UI
             if display_frame is not None:
@@ -1140,6 +1141,7 @@ def run_bimanual(participant_id: str, trial_plan: list[dict], block_num: int):
                         log_and_next("missed_target", dist_2d, current_cube_pos_live)
 
             p.stepSimulation()
+            time.sleep(1.0 / 80.0)
 
         return True
 
