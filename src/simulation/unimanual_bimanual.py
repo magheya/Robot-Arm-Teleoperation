@@ -288,6 +288,7 @@ class SharedState:
         self.lock = threading.Lock()
 
 def run_unimanual(participant_id: str, trial_plan: list[dict], block_num: int):    
+    global shared
     DEADZONE_TOP = 0.42
     DEADZONE_BOTTOM = 0.58
     JOINT_SPEED = 2.0
@@ -851,6 +852,8 @@ def bimanual_vision_worker(shared: BimanualSharedState,
     cap.release()
 
 def run_bimanual(participant_id: str, trial_plan: list[dict], block_num: int):  
+    global shared
+
     SUCCESS_THRESH = 0.065
     FLOOR_Z_THRESH = 0.06
     GRASP_XY_THRESH = 0.065
@@ -931,6 +934,7 @@ def run_bimanual(participant_id: str, trial_plan: list[dict], block_num: int):
     current_D = float(np.linalg.norm(current_cube_pos - current_target_pos))
 
     def set_trial(i: int):
+        global shared
         nonlocal current_difficulty, current_cube_pos, current_D
         nonlocal trial_start, cube_attached, cid, drops, time_to_grasp
 
